@@ -1,0 +1,113 @@
+"""Websocket API commands consumed by the IP Management frontend panel."""
+from __future__ import annotations
+
+from typing import Any
+
+import voluptuous as vol
+from homeassistant.components import websocket_api
+from homeassistant.core import HomeAssistant, callback
+
+from .const import (
+    DOMAIN,
+    WS_DEVICES_LIST,
+    WS_DEVICES_SET_OVERRIDE,
+    WS_SUBNETS_DELETE,
+    WS_SUBNETS_LIST,
+    WS_SUBNETS_SAVE,
+)
+from .storage import SubnetStore
+from .device_matcher import DeviceMatcher
+from .subnet_utils import InvalidCidrError, SubnetNestingError, display_range
+
+
+def _entry_data(hass: HomeAssistant) -> dict[str, Any]:
+    domain_data = hass.data.get(DOMAIN, {})
+    if not domain_data:
+        raise LookupError("IP Management is not set up")
+    return next(iter(domain_data.values()))
+
+
+def _store(hass: HomeAssistant) -> SubnetStore:
+    return _entry_data(hass)["store"]
+
+
+def _matcher(hass: HomeAssistant) -> DeviceMatcher:
+    return _entry_data(hass)["matcher"]
+
+
+@websocket_api.websocket_command({vol.Required("type"): WS_SUBNETS_LIST})
+@websocket_api.async_response
+async def ws_list_subnets(hass, connection, msg):
+    subnets = []
+    for record in _store(hass).subnets:
+        record = dict(record)
+        record["display_range"] = display_range(record["cidr"])
+        subnets.append(record)
+    connection.send_result(msg["id"], {"subnets": subnets})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_SUBNETS_SAVE,
+        vol.Optional("id"): str,
+        vol.Required("cidr"): str,
+        vol.Optional("parent_id"): vol.Any(str, None),
+        vol.Optional("label", default=""): str,
+        vol.Optional("item_type", default=""): str,
+        vol.Optional("notes"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_save_subnet(hass, connection, msg):
+    payload = {k: v for k, v in msg.items() if k != "type"}
+    try:
+        record = await _store(hass).async_save_subnet(payload)
+    except (InvalidCidrError, SubnetNestingError) as err:
+        connection.send_error(msg["id"], "invalid_subnet", str(err))
+        return
+    record = dict(record)
+    record["display_range"] = display_range(record["cidr"])
+    connection.send_result(msg["id"], {"subnet": record})
+
+
+@websocket_api.websocket_command(
+    {vol.Required("type"): WS_SUBNETS_DELETE, vol.Required("id"): str}
+)
+@websocket_api.async_response
+async def ws_delete_subnet(hass, connection, msg):
+    await _store(hass).async_delete_subnet(msg["id"])
+    connection.send_result(msg["id"], {})
+
+
+@websocket_api.websocket_command({vol.Required("type"): WS_DEVICES_LIST})
+@websocket_api.async_response
+async def ws_list_devices(hass, connection, msg):
+    store = _store(hass)
+    matches = _matcher(hass).async_match_devices_to_subnets(
+        store.subnets, store.device_overrides
+    )
+    connection.send_result(msg["id"], {"devices": matches})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_DEVICES_SET_OVERRIDE,
+        vol.Required("device_id"): str,
+        vol.Optional("subnet_id"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_set_device_override(hass, connection, msg):
+    await _store(hass).async_set_device_override(
+        msg["device_id"], msg.get("subnet_id")
+    )
+    connection.send_result(msg["id"], {})
+
+
+@callback
+def async_register_websocket_commands(hass: HomeAssistant) -> None:
+    websocket_api.async_register_command(hass, ws_list_subnets)
+    websocket_api.async_register_command(hass, ws_save_subnet)
+    websocket_api.async_register_command(hass, ws_delete_subnet)
+    websocket_api.async_register_command(hass, ws_list_devices)
+    websocket_api.async_register_command(hass, ws_set_device_override)

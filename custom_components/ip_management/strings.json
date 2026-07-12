@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up IP Management",
+        "description": "This adds an \"IP Management\" panel to the sidebar for tracking subnets and the devices using them. No configuration is needed here — subnets are managed from the panel itself."
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "IP Management is already set up."
+    }
+  }
+}

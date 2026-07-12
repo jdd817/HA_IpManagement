@@ -154,10 +154,14 @@ user up front rather than promised as 100% automatic (see open questions).
 
 ### Frontend implementation notes
 
-- Built with `LitElement` (same stack HA's own frontend uses), hand-written
-  — no heavy framework needed for two views and a handful of components.
-- Shipped as a single bundled JS file (esbuild) registered as a static path
-  under `/ip_management_panel/` and loaded via `panel_custom`.
+- Implemented (see `custom_components/ip_management/www/ip-management-panel.js`)
+  as a dependency-free vanilla `HTMLElement`/Shadow DOM custom element rather
+  than `LitElement` — for two views and a handful of components a build step
+  (esbuild + `lit` dependency) added more moving parts than it saved, and a
+  hand-written file ships as-is with no build/CI step required to keep the
+  static asset in sync with source.
+- Served as a static path (`/ip_management_static/`) registered in
+  `__init__.py`, loaded via `panel_custom.async_register_panel`.
 
 ## 6. Suggested Build Order
 
