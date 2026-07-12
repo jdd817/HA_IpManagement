@@ -62,10 +62,13 @@ tests/
 - **Panel registration**: `async_register_panel` (via
   `homeassistant.components.panel_custom`) registers a custom element served
   from `www/ip-management-panel.js`, with `sidebar_title="IP Management"`
-  and an `mdi:lan` icon. The panel is a single custom element with two
-  internal views/routes: the main dashboard and the subnet-management
-  screen, so the 3-dot menu can navigate between them without HA needing a
-  second sidebar entry.
+  and an `mdi:lan` icon. **The sidebar link itself opens the Utilized IPs
+  screen (§5) directly** — that is the panel's default/landing route.
+  Subnet management is *not* a separate sidebar entry; it's a second
+  internal route within the same custom element, reached only via the
+  3-dot menu on the Utilized IPs screen, and navigating there swaps the
+  panel's content in place (URL changes under the same sidebar item, e.g.
+  `/ip-management/dashboard` → `/ip-management/subnets`).
 
 ## 3. Data Model
 
@@ -128,7 +131,7 @@ user up front rather than promised as 100% automatic (see open questions).
 
 ## 5. UI/UX Flows
 
-### Main dashboard (sidebar panel)
+### Utilized IPs screen (the sidebar link itself)
 
 - Tree/table of subnets, nested rows indented to match `parent_id` chains.
 - Each row: label, item_type badge, CIDR block, last-octet range, device
