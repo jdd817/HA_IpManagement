@@ -15,6 +15,7 @@ from .const import (
     DOMAIN,
     PANEL_COMPONENT_NAME,
     PANEL_ICON,
+    PANEL_JS_VERSION,
     PANEL_TITLE,
     PANEL_URL,
     STATIC_JS_FILE,
@@ -81,7 +82,11 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
         webcomponent_name=PANEL_COMPONENT_NAME,
         sidebar_title=PANEL_TITLE,
         sidebar_icon=PANEL_ICON,
-        module_url=f"{STATIC_URL_PATH}/{STATIC_JS_FILE}",
+        # The `?v=` query string busts the browser cache set by
+        # cache_headers=True above whenever PANEL_JS_VERSION is bumped, so
+        # panel updates take effect without users needing to manually clear
+        # their cache.
+        module_url=f"{STATIC_URL_PATH}/{STATIC_JS_FILE}?v={PANEL_JS_VERSION}",
         embed_iframe=False,
         require_admin=True,
     )

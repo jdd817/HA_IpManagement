@@ -1,7 +1,7 @@
 {
   "domain": "ip_management",
   "name": "IP Management",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "config_flow": true,
   "dependencies": ["http", "websocket_api", "panel_custom"],
   "codeowners": [],
