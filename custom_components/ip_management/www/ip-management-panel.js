@@ -337,7 +337,7 @@ class IPManagementPanel extends HTMLElement {
   async _deleteSubnet(id) {
     await this._hass.connection.sendMessagePromise({
       type: "ip_management/subnets/delete",
-      id,
+      subnet_id: id,
     });
     await this._loadData();
   }
@@ -680,7 +680,7 @@ class IPManagementPanel extends HTMLElement {
         e.preventDefault();
         const data = new FormData(form);
         const payload = {
-          id: this._editingSubnet.id || undefined,
+          subnet_id: this._editingSubnet.id || undefined,
           cidr: data.get("cidr").trim(),
           parent_id: data.get("parent_id") || null,
           label: data.get("label").trim(),

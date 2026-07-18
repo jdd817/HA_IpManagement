@@ -49,7 +49,10 @@ async def ws_list_subnets(hass, connection, msg):
 @websocket_api.websocket_command(
     {
         vol.Required("type"): WS_SUBNETS_SAVE,
-        vol.Optional("id"): str,
+        # Named "subnet_id", not "id" — every websocket message already has a
+        # reserved, auto-assigned numeric "id" field used for request/response
+        # correlation, and reusing it here gets silently clobbered by that.
+        vol.Optional("subnet_id"): str,
         vol.Required("cidr"): str,
         vol.Optional("parent_id"): vol.Any(str, None),
         vol.Optional("label", default=""): str,
@@ -59,7 +62,9 @@ async def ws_list_subnets(hass, connection, msg):
 )
 @websocket_api.async_response
 async def ws_save_subnet(hass, connection, msg):
-    payload = {k: v for k, v in msg.items() if k != "type"}
+    payload = {k: v for k, v in msg.items() if k not in ("type", "id")}
+    if "subnet_id" in payload:
+        payload["id"] = payload.pop("subnet_id")
     try:
         record = await _store(hass).async_save_subnet(payload)
     except (InvalidCidrError, SubnetNestingError) as err:
@@ -71,11 +76,11 @@ async def ws_save_subnet(hass, connection, msg):
 
 
 @websocket_api.websocket_command(
-    {vol.Required("type"): WS_SUBNETS_DELETE, vol.Required("id"): str}
+    {vol.Required("type"): WS_SUBNETS_DELETE, vol.Required("subnet_id"): str}
 )
 @websocket_api.async_response
 async def ws_delete_subnet(hass, connection, msg):
-    await _store(hass).async_delete_subnet(msg["id"])
+    await _store(hass).async_delete_subnet(msg["subnet_id"])
     connection.send_result(msg["id"], {})
 
 
