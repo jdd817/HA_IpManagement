@@ -4,11 +4,14 @@ A Home Assistant custom integration for tracking subnets on your home
 network and seeing which registered devices are using an IP within each one.
 
 - Define subnets as CIDR blocks, with an optional label/item type
-  (e.g. "Cameras", "IoT"), and nest subnets inside one another.
+  (e.g. "Cameras", "IoT"). Nesting is automatic — there's no parent field
+  to set. If a subnet you add falls inside an existing one, it becomes that
+  subnet's child; if it falls *between* two existing nested subnets, the
+  hierarchy is re-inferred so the more specific one slots in underneath it.
 - A sidebar link, **IP Management**, opens the *Utilized IPs* screen
   directly — a tree of your subnets (shown as CIDR + last-octet range)
   with the Home Assistant devices whose resolved IP falls inside each one.
-- **Subnet Management** (add/edit/delete/nest subnets) is reached from the
+- **Subnet Management** (add/edit/delete subnets) is reached from the
   3-dot menu on that screen — it is not a separate sidebar entry.
 
 See [PLAN.md](PLAN.md) for the full architecture writeup.

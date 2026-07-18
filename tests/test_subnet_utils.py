@@ -2,14 +2,14 @@ import pytest
 
 from custom_components.ip_management.subnet_utils import (
     InvalidCidrError,
-    SubnetNestingError,
     display_range,
+    infer_parent_ids,
     ip_in_network,
     last_octet_range,
+    most_specific_container,
     most_specific_match,
     normalize_cidr,
     parse_network,
-    validate_nesting,
 )
 
 
@@ -60,20 +60,38 @@ def test_display_range_falls_back_to_full_hosts_for_large_blocks():
     assert display_range("10.0.0.0/16") == "10.0.0.0-10.0.255.255"
 
 
-def test_validate_nesting_no_parent_still_validates_child():
-    with pytest.raises(InvalidCidrError):
-        validate_nesting("garbage", None)
-    # Valid child with no parent is fine.
-    validate_nesting("192.168.1.0/24", None)
+def test_most_specific_container_picks_smallest_enclosing_subnet():
+    candidates = {"wide": "192.168.0.0/16", "narrow": "192.168.1.0/24"}
+    assert most_specific_container("192.168.1.128/25", candidates) == "narrow"
 
 
-def test_validate_nesting_child_within_parent_ok():
-    validate_nesting("192.168.1.0/25", "192.168.1.0/24")
+def test_most_specific_container_no_match_returns_none():
+    assert most_specific_container("10.0.0.0/24", {"a": "192.168.0.0/16"}) is None
 
 
-def test_validate_nesting_child_outside_parent_raises():
-    with pytest.raises(SubnetNestingError):
-        validate_nesting("192.168.2.0/25", "192.168.1.0/24")
+def test_most_specific_container_excludes_equal_or_smaller_networks():
+    # A same-size or more-specific "candidate" is never treated as a parent.
+    candidates = {"same": "192.168.1.0/24", "smaller": "192.168.1.0/25"}
+    assert most_specific_container("192.168.1.0/24", candidates) is None
+
+
+def test_infer_parent_ids_simple_nesting():
+    cidrs = {"a": "10.0.0.0/8", "b": "10.1.0.0/16", "c": "10.1.1.0/24"}
+    parents = infer_parent_ids(cidrs)
+    assert parents == {"a": None, "b": "a", "c": "b"}
+
+
+def test_infer_parent_ids_inserting_between_existing_subnets_reparents_child():
+    # "b" starts out as a direct child of "a"; inserting "mid" between them
+    # should re-parent "b" under "mid", and "mid" under "a".
+    cidrs = {"a": "10.0.0.0/8", "b": "10.1.1.0/24", "mid": "10.1.0.0/16"}
+    parents = infer_parent_ids(cidrs)
+    assert parents == {"a": None, "mid": "a", "b": "mid"}
+
+
+def test_infer_parent_ids_unrelated_subnets_have_no_parent():
+    cidrs = {"a": "192.168.1.0/24", "b": "10.0.0.0/24"}
+    assert infer_parent_ids(cidrs) == {"a": None, "b": None}
 
 
 def test_ip_in_network():

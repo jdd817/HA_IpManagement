@@ -5,10 +5,7 @@ import pytest
 
 from custom_components.ip_management import storage as storage_module
 from custom_components.ip_management.storage import SubnetStore
-from custom_components.ip_management.subnet_utils import (
-    InvalidCidrError,
-    SubnetNestingError,
-)
+from custom_components.ip_management.subnet_utils import InvalidCidrError
 
 
 class FakeStore:
@@ -46,12 +43,13 @@ def test_save_and_list_subnet():
 
     record = run(
         store.async_save_subnet(
-            {"cidr": "192.168.1.0/24", "parent_id": None, "label": "Home", "item_type": "trusted"}
+            {"cidr": "192.168.1.0/24", "label": "Home", "item_type": "trusted"}
         )
     )
 
     assert record["cidr"] == "192.168.1.0/24"
     assert record["label"] == "Home"
+    assert record["parent_id"] is None
     assert store.subnets == [record]
 
 
@@ -60,49 +58,59 @@ def test_save_rejects_invalid_cidr():
     run(store.async_load())
 
     with pytest.raises(InvalidCidrError):
-        run(store.async_save_subnet({"cidr": "not-a-cidr", "parent_id": None}))
+        run(store.async_save_subnet({"cidr": "not-a-cidr"}))
 
 
-def test_save_rejects_child_not_within_parent():
+def test_parent_is_inferred_from_cidr_containment_regardless_of_save_order():
     store = make_store()
     run(store.async_load())
 
-    parent = run(store.async_save_subnet({"cidr": "192.168.1.0/24"}))
+    # Child saved before its parent exists...
+    child = run(store.async_save_subnet({"cidr": "192.168.1.128/25", "label": "IoT"}))
+    assert child["parent_id"] is None  # no containing subnet yet
 
-    with pytest.raises(SubnetNestingError):
-        run(
-            store.async_save_subnet(
-                {"cidr": "192.168.2.0/25", "parent_id": parent["id"]}
-            )
-        )
-
-
-def test_save_rejects_self_parent():
-    store = make_store()
-    run(store.async_load())
-
-    record = run(store.async_save_subnet({"cidr": "192.168.1.0/24"}))
-
-    with pytest.raises(SubnetNestingError):
-        run(
-            store.async_save_subnet(
-                {"id": record["id"], "cidr": "192.168.1.0/24", "parent_id": record["id"]}
-            )
-        )
-
-
-def test_nested_subnet_accepted():
-    store = make_store()
-    run(store.async_load())
-
+    # ...once the parent is added, the child is automatically re-parented.
     parent = run(store.async_save_subnet({"cidr": "192.168.1.0/24", "label": "Home"}))
+
+    updated_child = next(s for s in store.subnets if s["id"] == child["id"])
+    assert updated_child["parent_id"] == parent["id"]
+
+
+def test_inserting_a_subnet_between_two_existing_ones_reparents_automatically():
+    store = make_store()
+    run(store.async_load())
+
+    grandparent = run(store.async_save_subnet({"cidr": "10.0.0.0/8", "label": "All"}))
     child = run(
+        store.async_save_subnet({"cidr": "10.1.1.0/24", "label": "Cameras"})
+    )
+    # Directly nested under the grandparent until now.
+    assert next(s for s in store.subnets if s["id"] == child["id"])["parent_id"] == grandparent["id"]
+
+    # Inserting a subnet "between" them should slot in and re-parent the child.
+    middle = run(store.async_save_subnet({"cidr": "10.1.0.0/16", "label": "Site"}))
+
+    updated_child = next(s for s in store.subnets if s["id"] == child["id"])
+    assert middle["parent_id"] == grandparent["id"]
+    assert updated_child["parent_id"] == middle["id"]
+
+
+def test_editing_a_subnets_cidr_recomputes_its_place_in_the_hierarchy():
+    store = make_store()
+    run(store.async_load())
+
+    home = run(store.async_save_subnet({"cidr": "192.168.1.0/24", "label": "Home"}))
+    other = run(store.async_save_subnet({"cidr": "10.0.0.0/24", "label": "Other"}))
+    assert other["parent_id"] is None
+
+    # Re-save "other" with a cidr that now falls inside "home".
+    updated = run(
         store.async_save_subnet(
-            {"cidr": "192.168.1.128/25", "parent_id": parent["id"], "label": "IoT"}
+            {"id": other["id"], "cidr": "192.168.1.64/26", "label": "Other"}
         )
     )
 
-    assert child["parent_id"] == parent["id"]
+    assert updated["parent_id"] == home["id"]
 
 
 def test_delete_subnet_reparents_children_to_grandparent():
@@ -110,16 +118,10 @@ def test_delete_subnet_reparents_children_to_grandparent():
     run(store.async_load())
 
     grandparent = run(store.async_save_subnet({"cidr": "10.0.0.0/8", "label": "All"}))
-    parent = run(
-        store.async_save_subnet(
-            {"cidr": "10.1.0.0/16", "parent_id": grandparent["id"], "label": "Site"}
-        )
-    )
-    child = run(
-        store.async_save_subnet(
-            {"cidr": "10.1.1.0/24", "parent_id": parent["id"], "label": "Cameras"}
-        )
-    )
+    parent = run(store.async_save_subnet({"cidr": "10.1.0.0/16", "label": "Site"}))
+    child = run(store.async_save_subnet({"cidr": "10.1.1.0/24", "label": "Cameras"}))
+    assert parent["parent_id"] == grandparent["id"]
+    assert next(s for s in store.subnets if s["id"] == child["id"])["parent_id"] == parent["id"]
 
     run(store.async_delete_subnet(parent["id"]))
 

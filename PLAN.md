@@ -55,7 +55,9 @@ tests/
   websocket commands rather than REST. Commands:
   - `ip_management/subnets/list` → full subnet list with computed CIDR
     metadata
-  - `ip_management/subnets/save` → create/update (validates CIDR + nesting)
+  - `ip_management/subnets/save` → create/update (validates the CIDR;
+    nesting is inferred automatically, see §3 — there is no parent field
+    to pass in)
   - `ip_management/subnets/delete`
   - `ip_management/devices/list` → devices/entities with a resolved IP and
     the most-specific subnet id they match
@@ -76,23 +78,36 @@ tests/
 Subnet:
   id: str                 # uuid
   cidr: str                # e.g. "192.168.10.0/24"
-  parent_id: str | None    # points at containing Subnet, if nested
+  parent_id: str | None    # system-computed; see below — never user-set
   label: str                # e.g. "Cameras", "IoT devices"
   item_type: str             # free-form category/tag shown in the UI
   notes: str | None
   created_at / updated_at
 ```
 
-Validation rules (in `subnet_utils.py`, built on Python's `ipaddress`
-module):
+**Nesting is fully automatic — there is no parent field in the UI or the
+save API.** `parent_id` is derived, on every save or delete, purely from
+CIDR containment (`subnet_utils.infer_parent_ids`, applied in
+`SubnetStore._recompute_hierarchy`):
 
-- `cidr` must parse as a valid `IPv4Network` (v6 out of scope for v1, see
-  §7).
-- If `parent_id` is set, the child network must be a strict subset of the
-  parent's network (`child.subnet_of(parent)`), else reject with a clear
-  error in the save response.
-- Sibling overlap is *allowed* (a user may intentionally want two labels over
-  the same range) but the UI will visually flag overlapping siblings.
+- Each subnet's parent is the most specific *other* subnet that strictly
+  contains its CIDR (smallest qualifying supernet wins). A subnet with no
+  containing subnet has `parent_id = None` (top level).
+- The full hierarchy is recomputed from scratch on every save/delete rather
+  than patching just the affected subnet. That's what makes "insert a
+  subnet between two existing ones" work for free: if a new subnet `mid`
+  is added between an existing `grandparent` and `child` (i.e.
+  `child ⊂ mid ⊂ grandparent`), recomputing finds `mid` as `child`'s new
+  most-specific container and re-parents it automatically, no special-case
+  code needed. Likewise, deleting a subnet re-parents its former children
+  to whatever now most-specifically contains them (typically its own former
+  parent).
+- Validation is limited to `cidr` parsing as a valid `IPv4Network` (v6 out
+  of scope for v1, see §7) — there's no "child outside parent" error case
+  to guard against since nothing user-supplied describes the relationship.
+- Sibling/overlapping CIDRs that don't nest (neither strictly contains the
+  other) simply end up with no parent/child relationship between them;
+  overlap warnings remain a future nice-to-have, not implemented in v1.
 
 Derived/display fields (computed on read, never stored):
 
@@ -147,9 +162,10 @@ user up front rather than promised as 100% automatic (see open questions).
 - Flat/nested list with inline edit + delete per row, and an "Add subnet"
   action.
 - Form fields: CIDR (validated live using the same `subnet_utils` logic,
-  mirrored in JS or validated via a debounced websocket call), parent
-  subnet (searchable dropdown, defaults to "no parent"/top level), label,
-  item type, notes.
+  mirrored in JS or validated via a debounced websocket call), label, item
+  type, notes. No parent-subnet field — nesting is inferred automatically
+  from the CIDR (see §3), and the list below the form still shows the
+  resulting hierarchy via indentation.
 - Back button / breadcrumb returns to the main dashboard.
 
 ### Frontend implementation notes

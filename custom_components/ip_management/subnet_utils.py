@@ -1,4 +1,4 @@
-"""Pure-Python helpers for subnet CIDR math, nesting validation, and display.
+"""Pure-Python helpers for subnet CIDR math, nesting inference, and display.
 
 Kept free of any Home Assistant imports so it can be unit tested in
 isolation and reused by both the storage layer and the device matcher.
@@ -7,15 +7,11 @@ from __future__ import annotations
 
 import ipaddress
 from dataclasses import dataclass
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 class InvalidCidrError(ValueError):
     """Raised when a CIDR string cannot be parsed as an IPv4 network."""
-
-
-class SubnetNestingError(ValueError):
-    """Raised when a child subnet is not fully contained within its parent."""
 
 
 def parse_network(cidr: str) -> ipaddress.IPv4Network:
@@ -31,16 +27,42 @@ def normalize_cidr(cidr: str) -> str:
     return str(parse_network(cidr))
 
 
-def validate_nesting(child_cidr: str, parent_cidr: str | None) -> None:
-    """Raise if `child_cidr` is invalid, or not contained within `parent_cidr`."""
-    child = parse_network(child_cidr)
-    if parent_cidr is None:
-        return
-    parent = parse_network(parent_cidr)
-    if not child.subnet_of(parent):
-        raise SubnetNestingError(
-            f"{child_cidr} is not contained within parent subnet {parent_cidr}"
+def most_specific_container(cidr: str, candidates: Mapping[str, str]) -> str | None:
+    """Return the id from `candidates` (id -> cidr) whose network is the
+    smallest one that strictly contains `cidr`, or None if none do.
+
+    "Strictly contains" excludes equal-sized or smaller (more specific)
+    networks, so a subnet is never considered its own parent.
+    """
+    network = parse_network(cidr)
+    best_id: str | None = None
+    best_prefixlen = -1
+    for candidate_id, candidate_cidr in candidates.items():
+        candidate_network = parse_network(candidate_cidr)
+        if candidate_network.prefixlen >= network.prefixlen:
+            continue
+        if network.subnet_of(candidate_network) and candidate_network.prefixlen > best_prefixlen:
+            best_prefixlen = candidate_network.prefixlen
+            best_id = candidate_id
+    return best_id
+
+
+def infer_parent_ids(cidrs_by_id: Mapping[str, str]) -> dict[str, str | None]:
+    """Infer parent/child nesting for a set of subnets from CIDR containment
+    alone: each subnet's parent is the most specific *other* subnet that
+    strictly contains it.
+
+    Recomputing every subnet's parent from scratch (rather than patching
+    just the one being added/edited) means inserting a subnet "between" two
+    existing ones automatically re-parents the more specific one — there is
+    no user-settable parent field to keep in sync.
+    """
+    return {
+        subnet_id: most_specific_container(
+            cidr, {i: c for i, c in cidrs_by_id.items() if i != subnet_id}
         )
+        for subnet_id, cidr in cidrs_by_id.items()
+    }
 
 
 @dataclass(frozen=True)

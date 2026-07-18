@@ -17,7 +17,7 @@ from .const import (
 )
 from .storage import SubnetStore
 from .device_matcher import DeviceMatcher
-from .subnet_utils import InvalidCidrError, SubnetNestingError, display_range
+from .subnet_utils import InvalidCidrError, display_range
 
 
 def _entry_data(hass: HomeAssistant) -> dict[str, Any]:
@@ -54,7 +54,6 @@ async def ws_list_subnets(hass, connection, msg):
         # correlation, and reusing it here gets silently clobbered by that.
         vol.Optional("subnet_id"): str,
         vol.Required("cidr"): str,
-        vol.Optional("parent_id"): vol.Any(str, None),
         vol.Optional("label", default=""): str,
         vol.Optional("item_type", default=""): str,
         vol.Optional("notes"): vol.Any(str, None),
@@ -62,12 +61,14 @@ async def ws_list_subnets(hass, connection, msg):
 )
 @websocket_api.async_response
 async def ws_save_subnet(hass, connection, msg):
+    # Parent/child nesting is inferred from CIDR containment (see
+    # SubnetStore._recompute_hierarchy) — there is no parent_id input here.
     payload = {k: v for k, v in msg.items() if k not in ("type", "id")}
     if "subnet_id" in payload:
         payload["id"] = payload.pop("subnet_id")
     try:
         record = await _store(hass).async_save_subnet(payload)
-    except (InvalidCidrError, SubnetNestingError) as err:
+    except InvalidCidrError as err:
         connection.send_error(msg["id"], "invalid_subnet", str(err))
         return
     record = dict(record)

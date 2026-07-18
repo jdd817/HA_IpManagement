@@ -529,10 +529,6 @@ class IPManagementPanel extends HTMLElement {
 
   _renderSubnetManagement() {
     const { rows } = this._buildTree();
-    const parentOptions = this._subnets
-      .filter((s) => !this._editingSubnet || s.id !== this._editingSubnet.id)
-      .map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label || s.cidr)}</option>`)
-      .join("");
 
     const editing = this._editingSubnet;
     const formHtml = editing
@@ -544,13 +540,10 @@ class IPManagementPanel extends HTMLElement {
             <div class="form-row">
               <label>CIDR block (e.g. 192.168.10.0/24)</label>
               <input name="cidr" required value="${escapeHtml(editing.cidr || "")}" placeholder="192.168.10.0/24" />
-            </div>
-            <div class="form-row">
-              <label>Parent subnet</label>
-              <select name="parent_id">
-                <option value="">No parent (top level)</option>
-                ${parentOptions}
-              </select>
+              <p style="font-size: 12px; color: var(--secondary-text-color, #727272); margin: 4px 0 0;">
+                Nesting is automatic — if this CIDR falls inside (or contains)
+                an existing subnet, the hierarchy is inferred for you.
+              </p>
             </div>
             <div class="form-row">
               <label>Label</label>
@@ -572,8 +565,6 @@ class IPManagementPanel extends HTMLElement {
         </div>
       `
       : "";
-
-    const setParentSelected = editing && editing.parent_id;
 
     const listHtml = rows
       .map(({ subnet, depth }) => {
@@ -608,13 +599,6 @@ class IPManagementPanel extends HTMLElement {
       </div>
     `;
 
-    // Restore the select's value after innerHTML render (can't set `selected`
-    // dynamically above without extra string juggling).
-    queueMicrotask(() => {
-      const select = this.shadowRoot.querySelector("select[name='parent_id']");
-      if (select && setParentSelected) select.value = setParentSelected;
-    });
-
     return html;
   }
 
@@ -642,7 +626,7 @@ class IPManagementPanel extends HTMLElement {
     const addBtn = root.getElementById("add-subnet-btn");
     if (addBtn)
       addBtn.addEventListener("click", () => {
-        this._editingSubnet = { id: null, cidr: "", parent_id: "", label: "", item_type: "", notes: "" };
+        this._editingSubnet = { id: null, cidr: "", label: "", item_type: "", notes: "" };
         this._formError = null;
         this._render();
       });
@@ -682,7 +666,6 @@ class IPManagementPanel extends HTMLElement {
         const payload = {
           subnet_id: this._editingSubnet.id || undefined,
           cidr: data.get("cidr").trim(),
-          parent_id: data.get("parent_id") || null,
           label: data.get("label").trim(),
           item_type: data.get("item_type").trim(),
           notes: data.get("notes").trim() || null,
