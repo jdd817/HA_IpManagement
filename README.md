@@ -50,12 +50,19 @@ Both are off by default. Enable them from Settings → Devices & Services →
 IP Management → **Configure**:
 
 - **Active scan (ping sweep)** — pings every host address in each subnet
-  you've *registered in the panel* (never a wider range), then reads the
-  system ARP/neighbor table to get a MAC address for whatever responds. Runs
-  on a timer; the interval is configurable in the same options screen
-  (default **24 hours**). Subnets larger than 512 hosts are skipped (and
-  logged) rather than scanned, so a mistakenly huge CIDR can't flood the
-  network.
+  you've *registered in the panel and individually opted in* (see below —
+  never a wider range), then reads the system ARP/neighbor table to get a
+  MAC address for whatever responds. Runs on a timer; the interval is
+  configurable in the same options screen (default **24 hours**). Subnets
+  larger than 512 hosts are skipped (and logged) rather than scanned, so a
+  mistakenly huge CIDR can't flood the network.
+
+  Turning this on in Configure only enables the feature — it doesn't scan
+  anything by itself. Each subnet also needs its own opt-in: open it in
+  **Subnet Management** and check "Include in active scan". This lets you
+  turn scanning on globally but limit it to just the subnets that actually
+  need it (e.g. an IoT subnet) rather than sweeping everything you've
+  registered.
 - **Passive discovery (mDNS)** — listens for mDNS/Bonjour announcements
   (HomeKit, Chromecast, AirPlay, network printers, etc.) via Home Assistant's
   shared zeroconf instance. Sends no traffic of its own, so it isn't limited

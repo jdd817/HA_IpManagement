@@ -43,6 +43,7 @@ tests/
 ├── test_device_matcher.py
 ├── test_active_scanner.py
 ├── test_passive_scanner.py
+├── test_coordinator.py
 └── test_websocket_api.py
 ```
 
@@ -89,6 +90,7 @@ Subnet:
   label: str                # e.g. "Cameras", "IoT devices"
   item_type: str             # free-form category/tag shown in the UI
   notes: str | None
+  active_scan_enabled: bool   # opt-in per subnet; default False — see §5
   created_at / updated_at
 ```
 
@@ -162,8 +164,15 @@ the toggles themselves.
 
 ### Active scan (ping sweep)
 
-- **Scope**: only CIDRs the user has registered as a subnet in the panel —
-  never a wider network. `active_scanner.hosts_to_scan(cidr, max_hosts)`
+- **Two-level opt-in.** The options-flow toggle only turns the coordinator
+  on at all; it does *not* imply scanning every registered subnet. Each
+  subnet also has its own `active_scan_enabled` flag (set from the Subnet
+  Management form, default `False`), and `coordinator.scannable_subnets()`
+  filters the store down to just those before a scan runs. This lets a user
+  enable active scanning globally but restrict it to, say, just the IoT
+  subnet, rather than sweeping every registered CIDR.
+- **Scope**: only CIDRs the user has both registered as a subnet *and*
+  opted in as above — never a wider network. `active_scanner.hosts_to_scan(cidr, max_hosts)`
   enumerates every host address in a subnet, returning `None` (skip + log)
   if that's more than `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` (512) hosts, so an
   accidentally huge CIDR (e.g. a /8) can't turn into a network flood.
@@ -249,9 +258,13 @@ unaffected).
   action.
 - Form fields: CIDR (validated live using the same `subnet_utils` logic,
   mirrored in JS or validated via a debounced websocket call), label, item
-  type, notes. No parent-subnet field — nesting is inferred automatically
-  from the CIDR (see §3), and the list below the form still shows the
-  resulting hierarchy via indentation.
+  type, notes, and an "Include in active scan" checkbox (`active_scan_enabled`,
+  off by default — see §5's two-level opt-in). No parent-subnet field —
+  nesting is inferred automatically from the CIDR (see §3), and the list
+  below the form still shows the resulting hierarchy via indentation.
+- Subnets opted into active scanning show a small badge in both this list
+  and the dashboard tree, so it's visible at a glance which subnets are
+  covered.
 - Back button / breadcrumb returns to the main dashboard.
 
 ### Frontend implementation notes

@@ -50,7 +50,37 @@ def test_save_and_list_subnet():
     assert record["cidr"] == "192.168.1.0/24"
     assert record["label"] == "Home"
     assert record["parent_id"] is None
+    assert record["active_scan_enabled"] is False
     assert store.subnets == [record]
+
+
+def test_active_scan_enabled_defaults_to_false_and_can_be_opted_in():
+    store = make_store()
+    run(store.async_load())
+
+    default_record = run(store.async_save_subnet({"cidr": "192.168.1.0/24"}))
+    assert default_record["active_scan_enabled"] is False
+
+    opted_in = run(
+        store.async_save_subnet({"cidr": "192.168.2.0/24", "active_scan_enabled": True})
+    )
+    assert opted_in["active_scan_enabled"] is True
+
+
+def test_active_scan_enabled_is_preserved_when_updating_other_fields():
+    store = make_store()
+    run(store.async_load())
+
+    record = run(
+        store.async_save_subnet({"cidr": "192.168.1.0/24", "active_scan_enabled": True})
+    )
+
+    updated = run(
+        store.async_save_subnet({"id": record["id"], "cidr": "192.168.1.0/24", "label": "Renamed"})
+    )
+
+    assert updated["active_scan_enabled"] is True
+    assert updated["label"] == "Renamed"
 
 
 def test_save_rejects_invalid_cidr():

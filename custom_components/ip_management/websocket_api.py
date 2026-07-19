@@ -59,6 +59,7 @@ async def ws_list_subnets(hass, connection, msg):
         vol.Optional("label", default=""): str,
         vol.Optional("item_type", default=""): str,
         vol.Optional("notes"): vol.Any(str, None),
+        vol.Optional("active_scan_enabled", default=False): bool,
     }
 )
 @websocket_api.async_response

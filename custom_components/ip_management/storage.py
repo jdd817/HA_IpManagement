@@ -74,6 +74,14 @@ class SubnetStore:
             "label": subnet.get("label", existing.get("label", "")),
             "item_type": subnet.get("item_type", existing.get("item_type", "")),
             "notes": subnet.get("notes", existing.get("notes")),
+            # Opt-in, per subnet: the active (ping-sweep) scanner only ever
+            # scans subnets with this set, even when active scanning is
+            # enabled globally (see coordinator.scannable_subnets).
+            "active_scan_enabled": bool(
+                subnet.get(
+                    "active_scan_enabled", existing.get("active_scan_enabled", False)
+                )
+            ),
             "updated_at": _utcnow_iso(),
         }
         record.setdefault("created_at", _utcnow_iso())

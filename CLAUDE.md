@@ -63,16 +63,23 @@ throughout this repo's history.
   `async_match_devices_to_subnets` takes an optional pre-merged `device_ips`
   dict (see `websocket_api.py` below) — omit it and it derives one itself
   via `async_get_device_ips()`, same as before this parameter existed.
-- **`active_scanner.py`** (`ActiveScanner`, opt-in) — ping-sweeps *only*
-  subnets registered in the panel (`hosts_to_scan` rejects/skips anything
-  over `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` hosts rather than scanning a
-  fraction of it), then reads the system ARP/neighbor table
-  (`ip neigh show` → `arp -a` fallback, plus a separate Windows `arp -a`
-  parser) to resolve a MAC for whatever responds. Shells out to the system
-  `ping` binary via subprocess rather than raw ICMP sockets — HA OS/Supervised
-  containers generally don't grant custom integrations `CAP_NET_RAW`.
-  `ActiveScanner.__init__` accepts `ping_fn`/`arp_table_fn` overrides
-  specifically so tests can inject fakes instead of touching the network.
+- **`active_scanner.py`** (`ActiveScanner`, opt-in, two levels deep) —
+  `async_scan(subnets)` ping-sweeps whatever subnet list it's handed; it has
+  no opinion on *which* subnets that should be (`hosts_to_scan` only rejects
+  a given subnet if it's over `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` hosts, not
+  based on any opt-in flag). Filtering to subnets the user actually opted
+  into (`Subnet.active_scan_enabled`, a per-subnet field set from the Subnet
+  Management form, default `False`) is `coordinator.scannable_subnets()`'s
+  job, not this module's — enabling active scanning in the options flow only
+  turns the coordinator on; scanning still touches nothing until individual
+  subnets are opted in too. Responding hosts are then correlated to a MAC by
+  reading the system ARP/neighbor table (`ip neigh show` → `arp -a`
+  fallback, plus a separate Windows `arp -a` parser). Shells out to the
+  system `ping` binary via subprocess rather than raw ICMP sockets — HA
+  OS/Supervised containers generally don't grant custom integrations
+  `CAP_NET_RAW`. `ActiveScanner.__init__` accepts `ping_fn`/`arp_table_fn`
+  overrides specifically so tests can inject fakes instead of touching the
+  network.
 - **`passive_scanner.py`** (`PassiveScanner`, opt-in) — listens for mDNS
   announcements via **Home Assistant's own shared zeroconf instance**
   (`homeassistant.components.zeroconf.async_get_async_instance`), not a
@@ -88,7 +95,13 @@ throughout this repo's history.
 - **`coordinator.py`** (`ActiveScanCoordinator`) — a
   `DataUpdateCoordinator` wrapping `ActiveScanner`; `update_interval` comes
   from the options-flow `active_scan_interval_hours` field (default 24h).
-  Thin by design — no dedicated test file, same policy as `__init__.py`.
+  Also owns `scannable_subnets()`, the module-level pure function that
+  filters the store down to subnets with `active_scan_enabled` set before
+  handing them to `ActiveScanner.async_scan` — kept as a standalone function
+  (rather than inline in `_async_update_data`) specifically so it's testable
+  without constructing a full coordinator (which needs a real-ish `hass`).
+  The coordinator class itself still has no dedicated test beyond that, same
+  thin-wiring policy as `__init__.py`.
 - **`websocket_api.py`** — the frontend panel talks to the backend
   exclusively over HA's websocket API, not REST. **Gotcha:** every websocket
   message already carries a reserved, auto-assigned numeric `id` field for
