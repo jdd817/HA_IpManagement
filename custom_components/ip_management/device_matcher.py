@@ -25,6 +25,11 @@ class DeviceIpInfo:
     name: str
     ip_address: str
     source: str  # "device_tracker" | "config_entry" | "active_scan" | "passive_scan"
+    # False only for scan results that couldn't be tied to a real HA device
+    # (resolve_scan_result's synthetic `scan:<ip>` case) - device_tracker and
+    # config_entry always originate from a real device_id, so this defaults
+    # to True for them.
+    device_matched: bool = True
 
 
 @dataclass(frozen=True)
@@ -146,12 +151,18 @@ class DeviceMatcher:
         if device_entry is not None:
             device_id = device_entry.id
             name = device_entry.name_by_user or device_entry.name or host.ip
+            device_matched = True
         else:
             device_id = f"scan:{host.ip}"
             name = host.name or host.ip
+            device_matched = False
 
         return DeviceIpInfo(
-            device_id=device_id, name=name, ip_address=host.ip, source=source
+            device_id=device_id,
+            name=name,
+            ip_address=host.ip,
+            source=source,
+            device_matched=device_matched,
         )
 
     def async_match_devices_to_subnets(
@@ -194,6 +205,7 @@ class DeviceMatcher:
                     "ip_address": info.ip_address,
                     "subnet_id": subnet_id,
                     "source": info.source,
+                    "device_matched": info.device_matched,
                 }
             )
         return matches

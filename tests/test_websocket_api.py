@@ -147,6 +147,7 @@ class FakeMatcher:
             name=base.name,
             ip_address=base.ip_address,
             source=source,
+            device_matched=base.device_matched,
         )
 
     def async_match_devices_to_subnets(self, subnets, device_overrides, device_ips=None):
@@ -158,6 +159,7 @@ class FakeMatcher:
                 "ip_address": info.ip_address,
                 "subnet_id": None,
                 "source": info.source,
+                "device_matched": info.device_matched,
             }
             for info in (device_ips or {}).values()
         ]
@@ -183,6 +185,7 @@ def test_ws_list_devices_scan_results_fill_gaps_but_never_override(hass_and_stor
             name="192.168.1.9",
             ip_address="192.168.1.9",
             source="active_scan",
+            device_matched=False,
         ),
     }
     matcher = FakeMatcher(device_ips=known, resolved_by_ip=resolved_by_ip)
@@ -197,8 +200,10 @@ def test_ws_list_devices_scan_results_fill_gaps_but_never_override(hass_and_stor
 
     merged = matcher.match_calls[0]
     assert merged["dev-1"].source == "device_tracker"  # not overridden by the scan
+    assert merged["dev-1"].device_matched is True
     assert merged["scan:192.168.1.9"].ip_address == "192.168.1.9"
     assert merged["scan:192.168.1.9"].source == "active_scan"
+    assert merged["scan:192.168.1.9"].device_matched is False
 
 
 def test_ws_list_devices_works_with_no_scanners_configured(hass_and_store):

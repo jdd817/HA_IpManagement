@@ -74,9 +74,11 @@ IP Management → **Configure**:
 
 Either result is matched back to an existing Home Assistant device by MAC
 address when possible; otherwise it shows up as a newly-discovered,
-unregistered device. **Neither ever overrides `device_tracker`/config-entry
-data Home Assistant already has** — they only fill in devices those sources
-couldn't find.
+unregistered device, marked with a **⚠ unidentified** badge so it's clear
+at a glance that this is an IP that responded to a scan without Home
+Assistant being able to say what device it actually is. **Neither ever
+overrides `device_tracker`/config-entry data Home Assistant already has**
+— they only fill in devices those sources couldn't find.
 
 ## Known limitations (v1)
 
