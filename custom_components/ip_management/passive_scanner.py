@@ -42,7 +42,7 @@ class PassiveScanner:
     async def async_start(self) -> None:
         if self._browser is not None:
             return
-        haz = ha_zeroconf.async_get_async_instance(self._hass)
+        haz = await ha_zeroconf.async_get_async_instance(self._hass)
         self._browser = AsyncServiceBrowser(
             haz.zeroconf,
             ZEROCONF_SERVICE_TYPES,
@@ -69,7 +69,7 @@ class PassiveScanner:
         )
 
     async def _async_resolve(self, service_type: str, name: str) -> None:
-        haz = ha_zeroconf.async_get_async_instance(self._hass)
+        haz = await ha_zeroconf.async_get_async_instance(self._hass)
         info = await haz.async_get_service_info(
             service_type, name, timeout=SERVICE_INFO_TIMEOUT_MS
         )
