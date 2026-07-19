@@ -51,9 +51,10 @@ throughout this repo's history.
   without special-case code. Also holds two separate manual-mapping dicts —
   easy to confuse: `device_overrides` (`device_id -> subnet_id`, reassigns
   which *subnet* a known device belongs to) and `ip_device_links`
-  (`ip_address -> device_id`, assigns which *device* an unidentified scan
-  result's *IP* belongs to). They're keyed the opposite way from each other
-  on purpose — pick the one that matches the entity you already have.
+  (`ip_address -> device_id`, assigns which *device* an *IP* belongs to,
+  for any IP — not just ones automatic matching couldn't identify). They're
+  keyed the opposite way from each other on purpose — pick the one that
+  matches the entity you already have.
 - **`device_matcher.py`** (`DeviceMatcher`) — resolves a device's IP from
   `device_tracker` entity attributes and config-entry `host`/`ip`/`ip_address`
   data (device_tracker wins when both exist), then matches each resolved IP
@@ -61,22 +62,27 @@ throughout this repo's history.
   `async_*`-named methods are plain sync functions (HA naming convention,
   not a coroutine marker) — don't `await` them. Also defines
   `DiscoveredHost(ip, mac, name)`, the shared record type `active_scanner.py`
-  /`passive_scanner.py` produce, and
-  `resolve_scan_result(host, source, ip_device_links=None)`, which turns one
-  into a `DeviceIpInfo`. Resolution order: `ip_device_links.get(host.ip)`
-  (a manual assignment from the panel) wins first if that device_id still
-  exists in the registry, then `host.mac` against the device registry's
-  `CONNECTION_NETWORK_MAC` connections, then a synthetic `scan:<ip>` id if
-  neither resolves. `DeviceIpInfo.device_matched` (default `True`) is set to
-  `False` only for that synthetic-id case — it's what the panel's
-  "unidentified" badge keys off of (see `www/ip-management-panel.js` below),
-  distinct from subnet-membership matching ("Unmatched devices").
-  `DeviceIpInfo.manually_assigned` is `True` only when the manual-link branch
-  produced the match — the panel uses it to show a "manually linked" badge
-  and an unassign action instead of the plain source badge.
-  `async_match_devices_to_subnets` takes an optional pre-merged `device_ips`
-  dict (see `websocket_api.py` below) — omit it and it derives one itself
-  via `async_get_device_ips()`, same as before this parameter existed.
+  /`passive_scanner.py` produce, and `resolve_scan_result(host, source)`,
+  which turns one into a `DeviceIpInfo` by matching `host.mac` against the
+  device registry's `CONNECTION_NETWORK_MAC` connections (falling back to a
+  synthetic `scan:<ip>` id when there's no match) — it knows nothing about
+  manual links; that's a separate concern (below). `DeviceIpInfo.device_matched`
+  (default `True`) is set to `False` only for that synthetic-id case — it's
+  what the panel's "unidentified" badge keys off of (see
+  `www/ip-management-panel.js` below), distinct from subnet-membership
+  matching ("Unmatched devices"). `async_match_devices_to_subnets` takes an
+  optional pre-merged `device_ips` dict (see `websocket_api.py` below) —
+  omit it and it derives one itself via `async_get_device_ips()`, same as
+  before this parameter existed.
+  `apply_manual_ip_links(device_ips, ip_device_links)` is the *only* place
+  `ip_device_links` gets applied: it runs as the final step in
+  `ws_list_devices`, after device_tracker/config_entry/both scanners are
+  already merged, so a manual assignment can correct *any* IP's device
+  attribution — not just scan results that came back unidentified. It
+  produces `DeviceIpInfo.manually_assigned = True`, which the panel uses to
+  show a "manually linked" badge instead of the plain source badge. A link
+  to a device_id no longer in the registry is silently ignored (leaves the
+  existing resolution for that IP untouched) rather than erroring.
 - **`active_scanner.py`** (`ActiveScanner`, opt-in, two levels deep) —
   `async_scan(subnets)` ping-sweeps whatever subnet list it's handed; it has
   no opinion on *which* subnets that should be (`hosts_to_scan` only rejects
@@ -138,14 +144,16 @@ throughout this repo's history.
   is *the* mechanism that guarantees scan results only fill gaps and never
   override a device_tracker/config_entry match. Both `entry_data.get(...)`
   calls default to `None`/absent-key-safe, since both scanners are optional
-  and may not exist in `hass.data[DOMAIN][entry_id]` at all. It reads
-  `store.ip_device_links` once per call and passes it into every
-  `resolve_scan_result` call so manual assignments apply to both scanners'
-  results. `ws_assign_ip_device` is the only writer of `ip_device_links`
-  (`ip_address`, `device_id` — `None` clears it); there's no backend command
-  to *list* HA devices for the assignment dropdown because the frontend
-  calls HA's own core `config/device_registry/list` websocket command
-  directly instead of duplicating that data through a custom endpoint.
+  and may not exist in `hass.data[DOMAIN][entry_id]` at all. After both
+  scanners are folded in, it calls `matcher.apply_manual_ip_links(device_ips,
+  store.ip_device_links)` as the *last* step before matching to subnets —
+  order matters here, since this is what lets a manual assignment override
+  device_tracker/config_entry results too, not just scan ones.
+  `ws_assign_ip_device` is the only writer of `ip_device_links` (`ip_address`,
+  `device_id` — `None` clears it); there's no backend command to *list* HA
+  devices for the assignment dialog's dropdown because the frontend calls
+  HA's own core `config/device_registry/list` websocket command directly
+  instead of duplicating that data through a custom endpoint.
 - **`__init__.py`** — wires storage/matcher (and, if enabled via options,
   the active-scan coordinator and passive scanner) into `hass.data[DOMAIN]`,
   registers websocket commands, and registers the sidebar panel via
@@ -188,23 +196,32 @@ as-is; there is nothing to compile.
   above). Don't re-add one.
 - Outgoing save/delete messages use `subnet_id`, matching the websocket API
   naming above — don't rename this back to `id`.
-- Badge/control helpers, easy to confuse: `sourceBadge(d.source)` (neutral,
-  shows tracker/config/active scan/mDNS), `unidentifiedDeviceBadge(d)`
-  (warning-styled, only renders when `d.device_matched === false`),
-  `manuallyAssignedBadge(d)` (renders when `d.manually_assigned === true`),
-  and `assignmentControls(d, haDevices)` (renders the device-picker
-  `<select>` + "Assign device" button when `device_matched === false`, or
-  an "Unassign device" button when `manually_assigned === true`, else
-  nothing). All four are rendered per device row in *both* places device
-  rows appear (the per-subnet list and the "Unmatched devices" section) —
-  don't add one without the others when touching that markup.
-- `_loadData()` also fetches every HA device via the core
-  `config/device_registry/list` websocket command (not a custom one) into
-  `this._haDevices`, used only to populate `assignmentControls`' dropdown.
-  Assign/unassign both call `_assignIpDevice(ip, deviceId)` →
-  `ip_management/devices/assign_ip` → reload. `deviceId: null` clears an
-  assignment; the assign button no-ops if nothing is selected in the
-  dropdown (empty string, not null) rather than sending an accidental clear.
+- Badge helpers, easy to confuse: `sourceBadge(d.source)` (neutral, shows
+  tracker/config/active scan/mDNS), `unidentifiedDeviceBadge(d)`
+  (warning-styled, only renders when `d.device_matched === false`), and
+  `manuallyAssignedBadge(d)` (renders when `d.manually_assigned === true`).
+  All three are rendered per device row in *both* places device rows appear
+  (the per-subnet list and the "Unmatched devices" section) — don't add one
+  without the others when touching that markup.
+- Every device row's `.device-ip` span carries `data-open-assign="<ip>"` and
+  is clickable — this is intentionally *not* gated on `device_matched` or
+  `manually_assigned`, since manual assignment must work on any row, matched
+  or not (see device_matcher.py's `apply_manual_ip_links` above). Clicking
+  looks the device up in `this._devices` by IP and calls
+  `_openAssignDialog(device)`, which sets `this._assigningDevice` and
+  re-renders; `_render()` appends `_renderAssignDialog()`'s markup
+  (`.dialog-overlay` + `.dialog-box`) after the normal view whenever that
+  field is set. The dialog's `<select>` is pre-selected to
+  `device.device_id` only if `device.manually_assigned` is true, else to the
+  empty-string "Automatic" option — this is why the dialog needs the full
+  device object from `this._devices`, not just the IP string. `_loadData()`
+  fetches every HA device via the core `config/device_registry/list`
+  websocket command (not a custom one) into `this._haDevices`, used only to
+  populate this dropdown. Saving reads the select's value (empty string ⇒
+  `null`) and calls `_assignIpDevice(ip, deviceId)` →
+  `ip_management/devices/assign_ip` → reload; Cancel and clicking the
+  overlay background (but not the dialog box itself) both close without
+  saving.
 
 ### Testing approach
 

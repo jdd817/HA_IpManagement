@@ -259,50 +259,81 @@ def test_resolve_scan_result_no_mac_uses_hostname_if_present(registries):
     assert info.device_matched is False
 
 
-def test_resolve_scan_result_manual_link_matches_device(registries):
-    registries.devices["dev-1"] = FakeDeviceEntry("dev-1", name="Unknown Gadget")
-    hass = FakeHass()
-    host = DiscoveredHost(ip="192.168.1.80", mac=None)
-
-    info = DeviceMatcher(hass).resolve_scan_result(
-        host, source="active_scan", ip_device_links={"192.168.1.80": "dev-1"}
-    )
-
-    assert info.device_id == "dev-1"
-    assert info.name == "Unknown Gadget"
-    assert info.device_matched is True
-    assert info.manually_assigned is True
-
-
-def test_resolve_scan_result_manual_link_takes_priority_over_mac(registries):
-    registries.devices["dev-mac"] = FakeDeviceEntry(
-        "dev-mac",
-        name="MAC Match",
-        connections={(real_dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff")},
-    )
+def test_apply_manual_ip_links_overrides_scan_sourced_entry(registries):
     registries.devices["dev-manual"] = FakeDeviceEntry("dev-manual", name="Manual Match")
     hass = FakeHass()
-    host = DiscoveredHost(ip="192.168.1.81", mac="AA:BB:CC:DD:EE:FF")
+    device_ips = {
+        "scan:192.168.1.80": DeviceIpInfo(
+            device_id="scan:192.168.1.80",
+            name="192.168.1.80",
+            ip_address="192.168.1.80",
+            source="active_scan",
+            device_matched=False,
+        )
+    }
 
-    info = DeviceMatcher(hass).resolve_scan_result(
-        host, source="active_scan", ip_device_links={"192.168.1.81": "dev-manual"}
+    result = DeviceMatcher(hass).apply_manual_ip_links(
+        device_ips, {"192.168.1.80": "dev-manual"}
     )
 
-    assert info.device_id == "dev-manual"
-    assert info.manually_assigned is True
+    assert "scan:192.168.1.80" not in result
+    assert result["dev-manual"].name == "Manual Match"
+    assert result["dev-manual"].ip_address == "192.168.1.80"
+    assert result["dev-manual"].source == "active_scan"
+    assert result["dev-manual"].device_matched is True
+    assert result["dev-manual"].manually_assigned is True
 
 
-def test_resolve_scan_result_manual_link_to_unknown_device_falls_back(registries):
+def test_apply_manual_ip_links_overrides_authoritative_source(registries):
+    """A manual assignment must also be able to correct a device_tracker or
+    config_entry match, not just scan results HA couldn't identify at all."""
+    registries.devices["dev-correct"] = FakeDeviceEntry("dev-correct", name="Correct Device")
     hass = FakeHass()
-    host = DiscoveredHost(ip="192.168.1.82", mac=None)
+    device_ips = {
+        "dev-wrong": DeviceIpInfo(
+            device_id="dev-wrong",
+            name="Wrong Device",
+            ip_address="192.168.1.81",
+            source="device_tracker",
+        )
+    }
 
-    info = DeviceMatcher(hass).resolve_scan_result(
-        host, source="active_scan", ip_device_links={"192.168.1.82": "nonexistent-device"}
+    result = DeviceMatcher(hass).apply_manual_ip_links(
+        device_ips, {"192.168.1.81": "dev-correct"}
     )
 
-    assert info.device_id == "scan:192.168.1.82"
-    assert info.device_matched is False
-    assert info.manually_assigned is False
+    assert "dev-wrong" not in result
+    assert result["dev-correct"].ip_address == "192.168.1.81"
+    assert result["dev-correct"].source == "device_tracker"
+    assert result["dev-correct"].manually_assigned is True
+
+
+def test_apply_manual_ip_links_ignores_link_to_unknown_device(registries):
+    hass = FakeHass()
+    device_ips = {
+        "dev-1": DeviceIpInfo(
+            device_id="dev-1", name="Known", ip_address="192.168.1.82", source="device_tracker"
+        )
+    }
+
+    result = DeviceMatcher(hass).apply_manual_ip_links(
+        device_ips, {"192.168.1.82": "nonexistent-device"}
+    )
+
+    assert result == device_ips
+
+
+def test_apply_manual_ip_links_no_op_when_no_links(registries):
+    hass = FakeHass()
+    device_ips = {
+        "dev-1": DeviceIpInfo(
+            device_id="dev-1", name="Known", ip_address="192.168.1.83", source="device_tracker"
+        )
+    }
+
+    result = DeviceMatcher(hass).apply_manual_ip_links(device_ips, {})
+
+    assert result == device_ips
 
 
 def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):

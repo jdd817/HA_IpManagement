@@ -16,7 +16,7 @@ STATIC_JS_FILE = "ip-management-panel.js"
 # with aggressive cache headers, so without a version query string browsers
 # would keep serving a stale (possibly incompatible) copy of the panel after
 # an update until the user manually clears their cache.
-PANEL_JS_VERSION = "6"
+PANEL_JS_VERSION = "7"
 
 WS_SUBNETS_LIST = f"{DOMAIN}/subnets/list"
 WS_SUBNETS_SAVE = f"{DOMAIN}/subnets/save"

@@ -100,23 +100,22 @@ async def ws_list_devices(hass, connection, msg):
     # scan results only fill in devices neither of those already resolved
     # (setdefault below never overwrites an existing entry).
     device_ips = matcher.async_get_device_ips()
-    ip_device_links = store.ip_device_links
 
     coordinator = entry_data.get("active_scan_coordinator")
     if coordinator is not None and coordinator.data:
         for host in coordinator.data:
-            info = matcher.resolve_scan_result(
-                host, source=SOURCE_ACTIVE_SCAN, ip_device_links=ip_device_links
-            )
+            info = matcher.resolve_scan_result(host, source=SOURCE_ACTIVE_SCAN)
             device_ips.setdefault(info.device_id, info)
 
     passive_scanner = entry_data.get("passive_scanner")
     if passive_scanner is not None:
         for host in passive_scanner.snapshot():
-            info = matcher.resolve_scan_result(
-                host, source=SOURCE_PASSIVE_SCAN, ip_device_links=ip_device_links
-            )
+            info = matcher.resolve_scan_result(host, source=SOURCE_PASSIVE_SCAN)
             device_ips.setdefault(info.device_id, info)
+
+    # Applied last so a manual assignment can correct any IP's device
+    # attribution, regardless of which source originally resolved it.
+    device_ips = matcher.apply_manual_ip_links(device_ips, store.ip_device_links)
 
     matches = matcher.async_match_devices_to_subnets(
         store.subnets, store.device_overrides, device_ips=device_ips

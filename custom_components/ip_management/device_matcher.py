@@ -135,32 +135,20 @@ class DeviceMatcher:
         merged.update(self._from_device_tracker())
         return merged
 
-    def resolve_scan_result(
-        self,
-        host: DiscoveredHost,
-        source: str,
-        ip_device_links: dict[str, str] | None = None,
-    ) -> DeviceIpInfo:
+    def resolve_scan_result(self, host: DiscoveredHost, source: str) -> DeviceIpInfo:
         """Turn a scanner's raw find into a DeviceIpInfo.
 
-        Resolution order: a manual IP->device link (`ip_device_links`, set via
-        the panel when MAC correlation couldn't identify a device) wins first
-        since it's an explicit user statement; then the host's MAC against the
-        device registry's connections, so it merges with rather than
-        duplicates anything device_tracker/config_entry already found.
-        Otherwise it gets a synthetic `scan:<ip>` id so it can still be shown
-        as a newly-discovered, unregistered device.
+        If the host's MAC matches a connection already in the device
+        registry, it's attributed to that real device (so it merges with,
+        rather than duplicates, anything device_tracker/config_entry already
+        found for it). Otherwise it gets a synthetic `scan:<ip>` id so it can
+        still be shown as a newly-discovered, unregistered device. Manual
+        per-IP overrides are applied afterwards, uniformly across every
+        source — see `apply_manual_ip_links`.
         """
-        dev_reg = dr.async_get(self._hass)
         device_entry = None
-        manually_assigned = False
-
-        manual_device_id = (ip_device_links or {}).get(host.ip)
-        if manual_device_id:
-            device_entry = dev_reg.async_get(manual_device_id)
-            manually_assigned = device_entry is not None
-
-        if device_entry is None and host.mac:
+        if host.mac:
+            dev_reg = dr.async_get(self._hass)
             device_entry = dev_reg.async_get_device(
                 connections={(dr.CONNECTION_NETWORK_MAC, dr.format_mac(host.mac))}
             )
@@ -180,8 +168,54 @@ class DeviceMatcher:
             ip_address=host.ip,
             source=source,
             device_matched=device_matched,
-            manually_assigned=manually_assigned,
         )
+
+    def apply_manual_ip_links(
+        self,
+        device_ips: dict[str, DeviceIpInfo],
+        ip_device_links: dict[str, str],
+    ) -> dict[str, DeviceIpInfo]:
+        """Apply manual per-IP device assignments, overriding any source.
+
+        Unlike `resolve_scan_result`'s own MAC-based matching, this runs last
+        - after device_tracker, config_entry, and both scanners have already
+        been merged - so a user's manual assignment (set via the panel's
+        assign-device dialog) can correct *any* IP's device attribution, not
+        just ones a scan couldn't identify at all. A link to a device_id no
+        longer in the registry is ignored, leaving whatever that IP already
+        resolved to untouched.
+        """
+        if not ip_device_links:
+            return device_ips
+
+        dev_reg = dr.async_get(self._hass)
+        result = dict(device_ips)
+        ip_to_device_id = {info.ip_address: did for did, info in device_ips.items()}
+
+        for ip_address, device_id in ip_device_links.items():
+            device_entry = dev_reg.async_get(device_id)
+            if device_entry is None:
+                continue
+
+            existing_device_id = ip_to_device_id.get(ip_address)
+            existing_source = (
+                result[existing_device_id].source
+                if existing_device_id in result
+                else "manual"
+            )
+            if existing_device_id is not None and existing_device_id != device_id:
+                result.pop(existing_device_id, None)
+
+            result[device_id] = DeviceIpInfo(
+                device_id=device_id,
+                name=device_entry.name_by_user or device_entry.name or ip_address,
+                ip_address=ip_address,
+                source=existing_source,
+                device_matched=True,
+                manually_assigned=True,
+            )
+
+        return result
 
     def async_match_devices_to_subnets(
         self,
