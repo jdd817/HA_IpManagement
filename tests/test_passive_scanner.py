@@ -60,6 +60,26 @@ class FakeHass:
         return asyncio.get_event_loop().create_task(coro)
 
 
+def patch_async_get_instance(monkeypatch, fake_zc):
+    """Patch ha_zeroconf.async_get_async_instance with a fake.
+
+    The real function is `async def` (must be awaited) - a bug where
+    passive_scanner.py called it without `await` (getting a coroutine object
+    back instead of the HaAsyncZeroconf instance) slipped past these tests
+    until it hit a real HA install, because the original fake here was a
+    plain sync lambda that didn't need awaiting either. Keeping this fake
+    async, matching the real signature, is what makes that class of bug
+    show up as a test failure instead.
+    """
+
+    async def _async_get_instance(hass):
+        return fake_zc
+
+    monkeypatch.setattr(
+        passive_scanner_module.ha_zeroconf, "async_get_async_instance", _async_get_instance
+    )
+
+
 def test_friendly_name_prefers_server_hostname():
     info = FakeServiceInfo(server="printer.local.", addresses=["192.168.1.5"])
     assert friendly_name_from_service_info(info, "Printer._ipp._tcp.local.") == "printer.local"
@@ -80,11 +100,7 @@ def test_resolve_adds_discovered_hosts_from_service_info(monkeypatch):
             )
         }
     )
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
     scanner = PassiveScanner(FakeHass())
 
     run(scanner._async_resolve("_ipp._tcp.local.", "Printer._ipp._tcp.local."))
@@ -97,11 +113,7 @@ def test_resolve_adds_discovered_hosts_from_service_info(monkeypatch):
 
 def test_resolve_skips_when_service_info_unavailable(monkeypatch):
     fake_zc = FakeAsyncZeroconf(service_info_by_name={})
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
     scanner = PassiveScanner(FakeHass())
 
     run(scanner._async_resolve("_ipp._tcp.local.", "Unknown._ipp._tcp.local."))
@@ -117,11 +129,7 @@ def test_state_change_schedules_resolution_except_on_removal(monkeypatch):
             )
         }
     )
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
 
     async def scenario():
         scanner = PassiveScanner(FakeHass())
@@ -148,11 +156,7 @@ def test_start_creates_browser_with_curated_service_types(monkeypatch):
     FakeBrowser.instances.clear()
     monkeypatch.setattr(passive_scanner_module, "AsyncServiceBrowser", FakeBrowser)
     fake_zc = FakeAsyncZeroconf()
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
     scanner = PassiveScanner(FakeHass())
 
     run(scanner.async_start())
@@ -167,11 +171,7 @@ def test_start_is_idempotent(monkeypatch):
     FakeBrowser.instances.clear()
     monkeypatch.setattr(passive_scanner_module, "AsyncServiceBrowser", FakeBrowser)
     fake_zc = FakeAsyncZeroconf()
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
     scanner = PassiveScanner(FakeHass())
 
     run(scanner.async_start())
@@ -184,11 +184,7 @@ def test_stop_cancels_the_browser(monkeypatch):
     FakeBrowser.instances.clear()
     monkeypatch.setattr(passive_scanner_module, "AsyncServiceBrowser", FakeBrowser)
     fake_zc = FakeAsyncZeroconf()
-    monkeypatch.setattr(
-        passive_scanner_module.ha_zeroconf,
-        "async_get_async_instance",
-        lambda hass: fake_zc,
-    )
+    patch_async_get_instance(monkeypatch, fake_zc)
     scanner = PassiveScanner(FakeHass())
     run(scanner.async_start())
 
