@@ -42,6 +42,33 @@ UI yet for manually overriding a device's subnet — see `storage.py`'s
 `async_set_device_override`, which the websocket API exposes as
 `ip_management/devices/set_override` for scripting/future UI work.
 
+Each device row shows a small badge for which of the sources below found it.
+
+## Optional discovery (active scan + passive mDNS)
+
+Both are off by default. Enable them from Settings → Devices & Services →
+IP Management → **Configure**:
+
+- **Active scan (ping sweep)** — pings every host address in each subnet
+  you've *registered in the panel* (never a wider range), then reads the
+  system ARP/neighbor table to get a MAC address for whatever responds. Runs
+  on a timer; the interval is configurable in the same options screen
+  (default **24 hours**). Subnets larger than 512 hosts are skipped (and
+  logged) rather than scanned, so a mistakenly huge CIDR can't flood the
+  network.
+- **Passive discovery (mDNS)** — listens for mDNS/Bonjour announcements
+  (HomeKit, Chromecast, AirPlay, network printers, etc.) via Home Assistant's
+  shared zeroconf instance. Sends no traffic of its own, so it isn't limited
+  to registered subnets, but only sees devices that advertise under one of a
+  curated list of service types (`const.ZEROCONF_SERVICE_TYPES`) — not a
+  full network inventory.
+
+Either result is matched back to an existing Home Assistant device by MAC
+address when possible; otherwise it shows up as a newly-discovered,
+unregistered device. **Neither ever overrides `device_tracker`/config-entry
+data Home Assistant already has** — they only fill in devices those sources
+couldn't find.
+
 ## Known limitations (v1)
 
 - IPv4 only.

@@ -251,6 +251,18 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+const SOURCE_LABELS = {
+  device_tracker: "tracker",
+  config_entry: "config",
+  active_scan: "active scan",
+  passive_scan: "mDNS",
+};
+
+function sourceBadge(source) {
+  const label = SOURCE_LABELS[source] || source;
+  return `<span class="badge" title="How this device's IP was found">${escapeHtml(label)}</span>`;
+}
+
 class IPManagementPanel extends HTMLElement {
   constructor() {
     super();
@@ -481,7 +493,7 @@ class IPManagementPanel extends HTMLElement {
                             .map(
                               (d) => `
                               <div class="device-item">
-                                <span>${escapeHtml(d.name)}</span>
+                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
                                 <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                               </div>`
                             )
@@ -505,7 +517,7 @@ class IPManagementPanel extends HTMLElement {
               .map(
                 (d) => `
                 <div class="device-item">
-                  <span>${escapeHtml(d.name)}</span>
+                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
                   <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                 </div>`
               )

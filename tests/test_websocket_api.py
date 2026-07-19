@@ -22,6 +22,7 @@ import pytest
 from custom_components.ip_management import storage as storage_module
 from custom_components.ip_management import websocket_api as ws_module
 from custom_components.ip_management.const import DOMAIN
+from custom_components.ip_management.device_matcher import DeviceIpInfo, DiscoveredHost
 from custom_components.ip_management.storage import SubnetStore
 
 
@@ -123,3 +124,92 @@ def test_delete_subnet_uses_subnet_id_not_envelope_id(hass_and_store):
     run(real(ws_module.ws_delete_subnet)(hass, connection, delete_msg))
 
     assert store.subnets == []
+
+
+class FakeMatcher:
+    """Stands in for DeviceMatcher: records what ws_list_devices assembles
+    for matching, so the merge/gap-fill logic can be tested in isolation
+    from DeviceMatcher's own registry-lookup internals (covered separately
+    in test_device_matcher.py)."""
+
+    def __init__(self, device_ips, resolved_by_ip):
+        self._device_ips = device_ips
+        self._resolved_by_ip = resolved_by_ip
+        self.match_calls = []
+
+    def async_get_device_ips(self):
+        return dict(self._device_ips)
+
+    def resolve_scan_result(self, host, source):
+        base = self._resolved_by_ip[host.ip]
+        return DeviceIpInfo(
+            device_id=base.device_id,
+            name=base.name,
+            ip_address=base.ip_address,
+            source=source,
+        )
+
+    def async_match_devices_to_subnets(self, subnets, device_overrides, device_ips=None):
+        self.match_calls.append(device_ips)
+        return [
+            {
+                "device_id": info.device_id,
+                "name": info.name,
+                "ip_address": info.ip_address,
+                "subnet_id": None,
+                "source": info.source,
+            }
+            for info in (device_ips or {}).values()
+        ]
+
+
+def test_ws_list_devices_scan_results_fill_gaps_but_never_override(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+
+    known = {
+        "dev-1": DeviceIpInfo(
+            device_id="dev-1", name="Known", ip_address="192.168.1.5", source="device_tracker"
+        )
+    }
+    # Simulate: active scan sees the *same* device (MAC correlation resolves
+    # it back to dev-1) as well as a genuinely new, unregistered device.
+    resolved_by_ip = {
+        "192.168.1.5": DeviceIpInfo(
+            device_id="dev-1", name="Known", ip_address="192.168.1.5", source="device_tracker"
+        ),
+        "192.168.1.9": DeviceIpInfo(
+            device_id="scan:192.168.1.9",
+            name="192.168.1.9",
+            ip_address="192.168.1.9",
+            source="active_scan",
+        ),
+    }
+    matcher = FakeMatcher(device_ips=known, resolved_by_ip=resolved_by_ip)
+    hass.data[DOMAIN]["entry-1"]["matcher"] = matcher
+    hass.data[DOMAIN]["entry-1"]["active_scan_coordinator"] = SimpleNamespace(
+        data=[DiscoveredHost(ip="192.168.1.5"), DiscoveredHost(ip="192.168.1.9")]
+    )
+    hass.data[DOMAIN]["entry-1"]["passive_scanner"] = None
+
+    msg = {"type": "ip_management/devices/list", "id": 42}
+    run(real(ws_module.ws_list_devices)(hass, connection, msg))
+
+    merged = matcher.match_calls[0]
+    assert merged["dev-1"].source == "device_tracker"  # not overridden by the scan
+    assert merged["scan:192.168.1.9"].ip_address == "192.168.1.9"
+    assert merged["scan:192.168.1.9"].source == "active_scan"
+
+
+def test_ws_list_devices_works_with_no_scanners_configured(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+    matcher = FakeMatcher(device_ips={}, resolved_by_ip={})
+    hass.data[DOMAIN]["entry-1"]["matcher"] = matcher
+    # No "active_scan_coordinator"/"passive_scanner" keys at all - both
+    # features disabled is the default; ws_list_devices must not KeyError.
+
+    msg = {"type": "ip_management/devices/list", "id": 7}
+    run(real(ws_module.ws_list_devices)(hass, connection, msg))
+
+    assert connection.results[0][1] == {"devices": []}

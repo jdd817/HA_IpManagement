@@ -24,7 +24,21 @@ class DeviceIpInfo:
     device_id: str
     name: str
     ip_address: str
-    source: str  # "device_tracker" | "config_entry"
+    source: str  # "device_tracker" | "config_entry" | "active_scan" | "passive_scan"
+
+
+@dataclass(frozen=True)
+class DiscoveredHost:
+    """A host found by active (ping) or passive (mDNS) discovery.
+
+    Produced by active_scanner.py / passive_scanner.py and resolved to a
+    DeviceIpInfo via DeviceMatcher.resolve_scan_result — kept independent of
+    both so neither scanner needs to know about device registry lookups.
+    """
+
+    ip: str
+    mac: str | None = None
+    name: str | None = None
 
 
 def _looks_like_ipv4(value: Any) -> bool:
@@ -113,14 +127,48 @@ class DeviceMatcher:
         merged.update(self._from_device_tracker())
         return merged
 
+    def resolve_scan_result(self, host: DiscoveredHost, source: str) -> DeviceIpInfo:
+        """Turn a scanner's raw find into a DeviceIpInfo.
+
+        If the host's MAC matches a connection already in the device
+        registry, it's attributed to that real device (so it merges with,
+        rather than duplicates, anything device_tracker/config_entry already
+        found for it). Otherwise it gets a synthetic `scan:<ip>` id so it can
+        still be shown as a newly-discovered, unregistered device.
+        """
+        device_entry = None
+        if host.mac:
+            dev_reg = dr.async_get(self._hass)
+            device_entry = dev_reg.async_get_device(
+                connections={(dr.CONNECTION_NETWORK_MAC, dr.format_mac(host.mac))}
+            )
+
+        if device_entry is not None:
+            device_id = device_entry.id
+            name = device_entry.name_by_user or device_entry.name or host.ip
+        else:
+            device_id = f"scan:{host.ip}"
+            name = host.name or host.ip
+
+        return DeviceIpInfo(
+            device_id=device_id, name=name, ip_address=host.ip, source=source
+        )
+
     def async_match_devices_to_subnets(
         self,
         subnets: list[dict[str, Any]],
         device_overrides: dict[str, str],
+        device_ips: dict[str, DeviceIpInfo] | None = None,
     ) -> list[dict[str, Any]]:
-        """Return per-device match info: device + resolved subnet_id (or None)."""
+        """Return per-device match info: device + resolved subnet_id (or None).
+
+        `device_ips` lets callers supply a pre-merged set (e.g. websocket_api
+        folding in active/passive scan results via resolve_scan_result)
+        instead of just what async_get_device_ips finds on its own.
+        """
         cidr_by_subnet_id = {s["id"]: s["cidr"] for s in subnets}
-        device_ips = self.async_get_device_ips()
+        if device_ips is None:
+            device_ips = self.async_get_device_ips()
 
         matches: list[dict[str, Any]] = []
         for device_id, info in device_ips.items():
