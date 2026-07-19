@@ -173,9 +173,14 @@ the toggles themselves.
   subnet, rather than sweeping every registered CIDR.
 - **Scope**: only CIDRs the user has both registered as a subnet *and*
   opted in as above — never a wider network. `active_scanner.hosts_to_scan(cidr, max_hosts)`
-  enumerates every host address in a subnet, returning `None` (skip + log)
-  if that's more than `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` (512) hosts, so an
-  accidentally huge CIDR (e.g. a /8) can't turn into a network flood.
+  enumerates *every* address in the block, including the network and
+  broadcast addresses (e.g. both `.32` and `.47` for a `/28` starting at
+  `.32`) — subnets here are arbitrary user-defined ranges, not classful
+  networks, and `subnet_utils.display_range` already shows the full range
+  including those bookend addresses as part of the subnet, so the scan
+  needs to match. Returns `None` (skip + log) if the block is more than
+  `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` (512) addresses, so an accidentally
+  huge CIDR (e.g. a /8) can't turn into a network flood.
 - **Mechanism**: `asyncio.create_subprocess_exec` to the system `ping`
   binary (bounded to `PING_CONCURRENCY` concurrent pings via a semaphore) —
   not raw ICMP sockets, which need root/`CAP_NET_RAW` that HA OS/Supervised
