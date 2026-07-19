@@ -132,10 +132,12 @@ class FakeMatcher:
     from DeviceMatcher's own registry-lookup internals (covered separately
     in test_device_matcher.py)."""
 
-    def __init__(self, device_ips, resolved_by_ip):
+    def __init__(self, device_ips, resolved_by_ip, manual_override_result=None):
         self._device_ips = device_ips
         self._resolved_by_ip = resolved_by_ip
+        self._manual_override_result = manual_override_result
         self.match_calls = []
+        self.apply_links_calls = []
 
     def async_get_device_ips(self):
         return dict(self._device_ips)
@@ -148,7 +150,14 @@ class FakeMatcher:
             ip_address=base.ip_address,
             source=source,
             device_matched=base.device_matched,
+            manually_assigned=base.manually_assigned,
         )
+
+    def apply_manual_ip_links(self, device_ips, ip_device_links):
+        self.apply_links_calls.append((dict(device_ips), dict(ip_device_links)))
+        if self._manual_override_result is not None:
+            return self._manual_override_result
+        return device_ips
 
     def async_match_devices_to_subnets(self, subnets, device_overrides, device_ips=None):
         self.match_calls.append(device_ips)
@@ -160,6 +169,7 @@ class FakeMatcher:
                 "subnet_id": None,
                 "source": info.source,
                 "device_matched": info.device_matched,
+                "manually_assigned": info.manually_assigned,
             }
             for info in (device_ips or {}).values()
         ]
@@ -204,6 +214,64 @@ def test_ws_list_devices_scan_results_fill_gaps_but_never_override(hass_and_stor
     assert merged["scan:192.168.1.9"].ip_address == "192.168.1.9"
     assert merged["scan:192.168.1.9"].source == "active_scan"
     assert merged["scan:192.168.1.9"].device_matched is False
+
+
+def test_ws_list_devices_applies_manual_ip_links_last(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+    run(store.async_set_ip_device_link("192.168.1.9", "dev-manual"))
+
+    known = {
+        "dev-1": DeviceIpInfo(
+            device_id="dev-1", name="Known", ip_address="192.168.1.9", source="device_tracker"
+        )
+    }
+    override_result = {
+        "dev-manual": DeviceIpInfo(
+            device_id="dev-manual",
+            name="Manual Device",
+            ip_address="192.168.1.9",
+            source="device_tracker",
+            device_matched=True,
+            manually_assigned=True,
+        )
+    }
+    matcher = FakeMatcher(
+        device_ips=known, resolved_by_ip={}, manual_override_result=override_result
+    )
+    hass.data[DOMAIN]["entry-1"]["matcher"] = matcher
+
+    msg = {"type": "ip_management/devices/list", "id": 42}
+    run(real(ws_module.ws_list_devices)(hass, connection, msg))
+
+    # ws_list_devices must call apply_manual_ip_links with the store's links,
+    # and pass its *return value* (not the pre-override dict) downstream.
+    assert matcher.apply_links_calls[0][1] == {"192.168.1.9": "dev-manual"}
+    assert matcher.match_calls[0] == override_result
+
+
+def test_ws_assign_ip_device_sets_and_clears_link(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+
+    assign_msg = {
+        "type": "ip_management/devices/assign_ip",
+        "id": 5,
+        "ip_address": "192.168.1.9",
+        "device_id": "dev-manual",
+    }
+    run(real(ws_module.ws_assign_ip_device)(hass, connection, assign_msg))
+    assert store.ip_device_links == {"192.168.1.9": "dev-manual"}
+    assert connection.results[0] == (5, {})
+
+    clear_msg = {
+        "type": "ip_management/devices/assign_ip",
+        "id": 6,
+        "ip_address": "192.168.1.9",
+        "device_id": None,
+    }
+    run(real(ws_module.ws_assign_ip_device)(hass, connection, clear_msg))
+    assert store.ip_device_links == {}
 
 
 def test_ws_list_devices_works_with_no_scanners_configured(hass_and_store):

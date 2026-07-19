@@ -11,6 +11,7 @@ from .const import (
     DOMAIN,
     SOURCE_ACTIVE_SCAN,
     SOURCE_PASSIVE_SCAN,
+    WS_DEVICES_ASSIGN_IP,
     WS_DEVICES_LIST,
     WS_DEVICES_SET_OVERRIDE,
     WS_SUBNETS_DELETE,
@@ -112,6 +113,10 @@ async def ws_list_devices(hass, connection, msg):
             info = matcher.resolve_scan_result(host, source=SOURCE_PASSIVE_SCAN)
             device_ips.setdefault(info.device_id, info)
 
+    # Applied last so a manual assignment can correct any IP's device
+    # attribution, regardless of which source originally resolved it.
+    device_ips = matcher.apply_manual_ip_links(device_ips, store.ip_device_links)
+
     matches = matcher.async_match_devices_to_subnets(
         store.subnets, store.device_overrides, device_ips=device_ips
     )
@@ -133,6 +138,22 @@ async def ws_set_device_override(hass, connection, msg):
     connection.send_result(msg["id"], {})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_DEVICES_ASSIGN_IP,
+        vol.Required("ip_address"): str,
+        # None clears a previous manual assignment for this IP.
+        vol.Optional("device_id"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_assign_ip_device(hass, connection, msg):
+    await _store(hass).async_set_ip_device_link(
+        msg["ip_address"], msg.get("device_id")
+    )
+    connection.send_result(msg["id"], {})
+
+
 @callback
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list_subnets)
@@ -140,3 +161,4 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_delete_subnet)
     websocket_api.async_register_command(hass, ws_list_devices)
     websocket_api.async_register_command(hass, ws_set_device_override)
+    websocket_api.async_register_command(hass, ws_assign_ip_device)

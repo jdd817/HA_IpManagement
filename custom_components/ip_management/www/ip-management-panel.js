@@ -243,6 +243,30 @@ const STYLE = `
   .add-fab {
     margin: 16px;
   }
+  .device-ip {
+    cursor: pointer;
+    border-bottom: 1px dotted var(--primary-color);
+  }
+  .device-ip:hover {
+    color: var(--primary-color);
+  }
+  .dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+  }
+  .dialog-box {
+    background: var(--card-background-color, #fff);
+    color: var(--primary-text-color);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+    width: 90%;
+    max-width: 400px;
+  }
 </style>
 `;
 
@@ -273,6 +297,11 @@ function unidentifiedDeviceBadge(device) {
   return `<span class="badge badge-warning" title="This IP responded to a scan, but couldn't be tied to a known Home Assistant device">&#10067; unidentified</span>`;
 }
 
+function manuallyAssignedBadge(device) {
+  if (!device.manually_assigned) return "";
+  return `<span class="badge" title="This IP was manually linked to this device">&#128279; manually linked</span>`;
+}
+
 function activeScanBadge(subnet) {
   if (!subnet.active_scan_enabled) return "";
   return `<span class="badge" title="Included in the active (ping sweep) scan">&#128225; active scan</span>`;
@@ -285,12 +314,14 @@ class IPManagementPanel extends HTMLElement {
     this._view = "dashboard";
     this._subnets = [];
     this._devices = [];
+    this._haDevices = [];
     this._loading = true;
     this._error = null;
     this._menuOpen = false;
     this._expanded = new Set();
     this._editingSubnet = null;
     this._formError = null;
+    this._assigningDevice = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -327,20 +358,49 @@ class IPManagementPanel extends HTMLElement {
     this._error = null;
     this._render();
     try {
-      const [subnetsResp, devicesResp] = await Promise.all([
+      const [subnetsResp, devicesResp, haDevicesResp] = await Promise.all([
         this._hass.connection.sendMessagePromise({
           type: "ip_management/subnets/list",
         }),
         this._hass.connection.sendMessagePromise({
           type: "ip_management/devices/list",
         }),
+        // Core HA command (same one the built-in device registry page uses)
+        // so users can pick from every registered device, not just ones this
+        // integration already resolved an IP for.
+        this._hass.connection.sendMessagePromise({
+          type: "config/device_registry/list",
+        }),
       ]);
       this._subnets = subnetsResp.subnets;
       this._devices = devicesResp.devices;
+      this._haDevices = haDevicesResp
+        .map((d) => ({ id: d.id, name: d.name_by_user || d.name || d.id }))
+        .sort((a, b) => a.name.localeCompare(b.name));
     } catch (err) {
       this._error = (err && err.message) || String(err);
     }
     this._loading = false;
+    this._render();
+  }
+
+  async _assignIpDevice(ipAddress, deviceId) {
+    await this._hass.connection.sendMessagePromise({
+      type: "ip_management/devices/assign_ip",
+      ip_address: ipAddress,
+      device_id: deviceId,
+    });
+    this._assigningDevice = null;
+    await this._loadData();
+  }
+
+  _openAssignDialog(device) {
+    this._assigningDevice = device;
+    this._render();
+  }
+
+  _closeAssignDialog() {
+    this._assigningDevice = null;
     this._render();
   }
 
@@ -448,8 +508,43 @@ class IPManagementPanel extends HTMLElement {
       this._view === "dashboard"
         ? this._renderDashboard()
         : this._renderSubnetManagement();
-    this.shadowRoot.innerHTML = `${STYLE}${body}`;
+    const dialog = this._assigningDevice ? this._renderAssignDialog() : "";
+    this.shadowRoot.innerHTML = `${STYLE}${body}${dialog}`;
     this._attachHandlers();
+  }
+
+  _renderAssignDialog() {
+    const device = this._assigningDevice;
+    // Pre-select the currently manually-linked device, if any; otherwise
+    // default to "Automatic" even though a device may already be shown for
+    // this row (matched via device_tracker/config_entry/MAC/scan), since no
+    // manual override exists yet for it.
+    const selectedId = device.manually_assigned ? device.device_id : "";
+    const options = this._haDevices
+      .map(
+        (d) =>
+          `<option value="${escapeHtml(d.id)}" ${d.id === selectedId ? "selected" : ""}>${escapeHtml(d.name)}</option>`
+      )
+      .join("");
+
+    return `
+      <div class="dialog-overlay" id="assign-dialog-overlay">
+        <div class="dialog-box">
+          <div class="section-title">Assign device for ${escapeHtml(device.ip_address)}</div>
+          <div class="form-row">
+            <label>Device</label>
+            <select id="assign-dialog-select">
+              <option value="" ${selectedId === "" ? "selected" : ""}>Automatic (no manual assignment)</option>
+              ${options}
+            </select>
+          </div>
+          <div class="form-actions">
+            <button type="button" class="secondary" id="assign-dialog-cancel">Cancel</button>
+            <button type="button" class="primary" id="assign-dialog-save">Save</button>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   _renderToolbar(title, { showMenu, showBack }) {
@@ -509,8 +604,8 @@ class IPManagementPanel extends HTMLElement {
                             .map(
                               (d) => `
                               <div class="device-item">
-                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
-                                <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)} ${manuallyAssignedBadge(d)}</span>
+                                <span class="device-ip" data-open-assign="${escapeHtml(d.ip_address)}" title="Click to assign a device">${escapeHtml(d.ip_address)}</span>
                               </div>`
                             )
                             .join("")
@@ -533,8 +628,8 @@ class IPManagementPanel extends HTMLElement {
               .map(
                 (d) => `
                 <div class="device-item">
-                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
-                  <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)} ${manuallyAssignedBadge(d)}</span>
+                  <span class="device-ip" data-open-assign="${escapeHtml(d.ip_address)}" title="Click to assign a device">${escapeHtml(d.ip_address)}</span>
                 </div>`
               )
               .join("")}
@@ -668,6 +763,34 @@ class IPManagementPanel extends HTMLElement {
         this._toggleExpanded(el.getAttribute("data-subnet-id"))
       );
     });
+
+    root.querySelectorAll("[data-open-assign]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const ip = el.getAttribute("data-open-assign");
+        const device = this._devices.find((d) => d.ip_address === ip);
+        if (device) this._openAssignDialog(device);
+      });
+    });
+
+    const dialogOverlay = root.getElementById("assign-dialog-overlay");
+    if (dialogOverlay) {
+      dialogOverlay.addEventListener("click", (e) => {
+        if (e.target === dialogOverlay) this._closeAssignDialog();
+      });
+    }
+
+    const dialogCancel = root.getElementById("assign-dialog-cancel");
+    if (dialogCancel)
+      dialogCancel.addEventListener("click", () => this._closeAssignDialog());
+
+    const dialogSave = root.getElementById("assign-dialog-save");
+    if (dialogSave)
+      dialogSave.addEventListener("click", () => {
+        const select = root.getElementById("assign-dialog-select");
+        const deviceId = select.value || null;
+        this._assignIpDevice(this._assigningDevice.ip_address, deviceId);
+      });
 
     const addBtn = root.getElementById("add-subnet-btn");
     if (addBtn)

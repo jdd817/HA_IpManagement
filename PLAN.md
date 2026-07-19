@@ -249,6 +249,41 @@ via an optional `device_ips` parameter (defaulting to its own
 `async_get_device_ips()` when omitted, so existing callers/tests are
 unaffected).
 
+### Manually assigning a device to any IP
+
+Automatic resolution (device_tracker, config_entry, and scan MAC
+correlation) doesn't always get it right — a device may not be in HA's
+registry at all, may sit under a MAC HA never saw, or may simply be
+misidentified. For that, `SubnetStore` keeps a second, separate mapping —
+`ip_device_links: dict[ip_address, device_id]` — distinct from the existing
+`device_overrides: dict[device_id, subnet_id]` (that one reassigns which
+*subnet* a known device belongs to; this one assigns which *device* an *IP*
+belongs to, and works for any IP, not just ones a scan couldn't identify).
+
+The override is applied centrally rather than per-source:
+`DeviceMatcher.apply_manual_ip_links(device_ips, ip_device_links)` runs
+**last**, after device_tracker, config_entry, and both scanners have already
+been merged into a single `device_ips` dict — so a manual assignment can
+correct *any* IP's device attribution regardless of which source originally
+resolved it. A link to a device_id no longer in the registry (e.g. deleted
+from HA) is ignored, leaving that IP's existing resolution untouched. A
+successful override produces `device_matched = True` plus
+`DeviceIpInfo.manually_assigned = True`, which the panel uses to show a
+distinct "manually linked" badge, as opposed to the plain source badge a
+device_tracker/config_entry/MAC-based match gets.
+`resolve_scan_result(host, source)` itself is unaware of manual links —
+it still only does MAC correlation — keeping the two concerns separate.
+
+The websocket command `ip_management/devices/assign_ip` (`ip_address`,
+`device_id` — `None` clears the link) is the only way to set/clear this
+mapping; `ws_list_devices` calls `apply_manual_ip_links` with
+`store.ip_device_links` as the final step before matching devices to
+subnets. The frontend gets the device list to populate the assignment
+dialog's dropdown from HA's own core websocket command
+`config/device_registry/list` rather than a custom backend endpoint, since
+it just needs id/name for every registered device, not anything
+IP-Management-specific.
+
 ## 6. UI/UX Flows
 
 ### Utilized IPs screen (the sidebar link itself)
@@ -264,6 +299,21 @@ unaffected).
   row appears (this list and the "Unmatched devices" section below) — a
   distinct concept from "unmatched" (which is about subnet membership, not
   device identity), so the two badges use different wording on purpose.
+- Every device row's IP address is clickable (in both this list and the
+  "Unmatched devices" section) and opens a modal **assign-device dialog** —
+  works the same whether the row is already matched, unidentified, or
+  previously manually linked, since the manual override applies to any IP
+  (see §5's manual assignment subsection). The dialog's `<select>` is
+  populated from every HA device (via the core `config/device_registry/list`
+  command) plus an "Automatic (no manual assignment)" option; it's
+  pre-selected to the current manual link if one exists, otherwise
+  "Automatic" even if a device is already shown for that row via some other
+  source. Saving calls `ip_management/devices/assign_ip`; picking
+  "Automatic" sends `device_id: null`, clearing any existing manual link.
+  A manually-linked row shows a "manually linked" badge instead of (or
+  alongside, if unidentified) the usual source badge — this is a per-IP
+  link, so re-running discovery won't need it reassigned as long as the IP
+  doesn't move to a different device.
 - Top-right 3-dot (`ha-icon-button` with `mdi:dots-vertical`) opens a menu
   with a single primary action: **"Manage subnets"** → switches the panel's
   internal route to the management screen (no new sidebar entry).

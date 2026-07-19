@@ -183,3 +183,26 @@ def test_device_override_set_and_clear():
 
     run(store.async_set_device_override("device-1", None))
     assert store.device_overrides == {}
+
+
+def test_ip_device_link_set_and_clear():
+    store = make_store()
+    run(store.async_load())
+
+    run(store.async_set_ip_device_link("192.168.1.50", "device-1"))
+    assert store.ip_device_links == {"192.168.1.50": "device-1"}
+
+    run(store.async_set_ip_device_link("192.168.1.50", None))
+    assert store.ip_device_links == {}
+
+
+def test_ip_device_link_persists_across_reload():
+    store = make_store()
+    run(store.async_load())
+    run(store.async_set_ip_device_link("192.168.1.50", "device-1"))
+
+    reloaded = SubnetStore(hass=object())
+    reloaded._store = store._store
+    run(reloaded.async_load())
+
+    assert reloaded.ip_device_links == {"192.168.1.50": "device-1"}
