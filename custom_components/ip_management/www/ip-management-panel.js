@@ -243,6 +243,29 @@ const STYLE = `
   .add-fab {
     margin: 16px;
   }
+  .assign-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+  .assign-select {
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid var(--divider-color, #ccc);
+    border-radius: 4px;
+    background: var(--primary-background-color, #fff);
+    color: var(--primary-text-color);
+    max-width: 200px;
+  }
+  .device-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .device-item-main {
+    display: flex;
+    justify-content: space-between;
+  }
 </style>
 `;
 
@@ -273,6 +296,37 @@ function unidentifiedDeviceBadge(device) {
   return `<span class="badge badge-warning" title="This IP responded to a scan, but couldn't be tied to a known Home Assistant device">&#10067; unidentified</span>`;
 }
 
+function manuallyAssignedBadge(device) {
+  if (!device.manually_assigned) return "";
+  return `<span class="badge" title="This IP was manually linked to this device">&#128279; manually linked</span>`;
+}
+
+function assignmentControls(device, haDevices) {
+  const ip = escapeHtml(device.ip_address);
+  if (device.manually_assigned) {
+    return `
+      <div class="assign-controls">
+        <button class="text-danger" data-unassign-ip="${ip}">Unassign device</button>
+      </div>
+    `;
+  }
+  if (device.device_matched === false) {
+    const options = haDevices
+      .map((d) => `<option value="${escapeHtml(d.id)}">${escapeHtml(d.name)}</option>`)
+      .join("");
+    return `
+      <div class="assign-controls">
+        <select class="assign-select" data-ip-select="${ip}">
+          <option value="">Select a device…</option>
+          ${options}
+        </select>
+        <button class="text-danger" data-assign-ip="${ip}">Assign device</button>
+      </div>
+    `;
+  }
+  return "";
+}
+
 function activeScanBadge(subnet) {
   if (!subnet.active_scan_enabled) return "";
   return `<span class="badge" title="Included in the active (ping sweep) scan">&#128225; active scan</span>`;
@@ -285,6 +339,7 @@ class IPManagementPanel extends HTMLElement {
     this._view = "dashboard";
     this._subnets = [];
     this._devices = [];
+    this._haDevices = [];
     this._loading = true;
     this._error = null;
     this._menuOpen = false;
@@ -327,21 +382,39 @@ class IPManagementPanel extends HTMLElement {
     this._error = null;
     this._render();
     try {
-      const [subnetsResp, devicesResp] = await Promise.all([
+      const [subnetsResp, devicesResp, haDevicesResp] = await Promise.all([
         this._hass.connection.sendMessagePromise({
           type: "ip_management/subnets/list",
         }),
         this._hass.connection.sendMessagePromise({
           type: "ip_management/devices/list",
         }),
+        // Core HA command (same one the built-in device registry page uses)
+        // so users can pick from every registered device, not just ones this
+        // integration already resolved an IP for.
+        this._hass.connection.sendMessagePromise({
+          type: "config/device_registry/list",
+        }),
       ]);
       this._subnets = subnetsResp.subnets;
       this._devices = devicesResp.devices;
+      this._haDevices = haDevicesResp
+        .map((d) => ({ id: d.id, name: d.name_by_user || d.name || d.id }))
+        .sort((a, b) => a.name.localeCompare(b.name));
     } catch (err) {
       this._error = (err && err.message) || String(err);
     }
     this._loading = false;
     this._render();
+  }
+
+  async _assignIpDevice(ipAddress, deviceId) {
+    await this._hass.connection.sendMessagePromise({
+      type: "ip_management/devices/assign_ip",
+      ip_address: ipAddress,
+      device_id: deviceId,
+    });
+    await this._loadData();
   }
 
   async _saveSubnet(payload) {
@@ -509,8 +582,11 @@ class IPManagementPanel extends HTMLElement {
                             .map(
                               (d) => `
                               <div class="device-item">
-                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
-                                <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                                <div class="device-item-main">
+                                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)} ${manuallyAssignedBadge(d)}</span>
+                                  <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                                </div>
+                                ${assignmentControls(d, this._haDevices)}
                               </div>`
                             )
                             .join("")
@@ -533,8 +609,11 @@ class IPManagementPanel extends HTMLElement {
               .map(
                 (d) => `
                 <div class="device-item">
-                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
-                  <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                  <div class="device-item-main">
+                    <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)} ${manuallyAssignedBadge(d)}</span>
+                    <span class="device-ip">${escapeHtml(d.ip_address)}</span>
+                  </div>
+                  ${assignmentControls(d, this._haDevices)}
                 </div>`
               )
               .join("")}
@@ -667,6 +746,29 @@ class IPManagementPanel extends HTMLElement {
       el.addEventListener("click", () =>
         this._toggleExpanded(el.getAttribute("data-subnet-id"))
       );
+    });
+
+    root.querySelectorAll("[data-assign-ip]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const ip = el.getAttribute("data-assign-ip");
+        const select = root.querySelector(`[data-ip-select="${ip}"]`);
+        const deviceId = select ? select.value : "";
+        if (!deviceId) return;
+        this._assignIpDevice(ip, deviceId);
+      });
+    });
+
+    root.querySelectorAll("[data-unassign-ip]").forEach((el) => {
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const ip = el.getAttribute("data-unassign-ip");
+        this._assignIpDevice(ip, null);
+      });
+    });
+
+    root.querySelectorAll(".assign-select").forEach((el) => {
+      el.addEventListener("click", (e) => e.stopPropagation());
     });
 
     const addBtn = root.getElementById("add-subnet-btn");

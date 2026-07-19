@@ -140,7 +140,9 @@ class FakeMatcher:
     def async_get_device_ips(self):
         return dict(self._device_ips)
 
-    def resolve_scan_result(self, host, source):
+    def resolve_scan_result(self, host, source, ip_device_links=None):
+        self.resolve_calls = getattr(self, "resolve_calls", [])
+        self.resolve_calls.append(ip_device_links)
         base = self._resolved_by_ip[host.ip]
         return DeviceIpInfo(
             device_id=base.device_id,
@@ -148,6 +150,7 @@ class FakeMatcher:
             ip_address=base.ip_address,
             source=source,
             device_matched=base.device_matched,
+            manually_assigned=base.manually_assigned,
         )
 
     def async_match_devices_to_subnets(self, subnets, device_overrides, device_ips=None):
@@ -160,6 +163,7 @@ class FakeMatcher:
                 "subnet_id": None,
                 "source": info.source,
                 "device_matched": info.device_matched,
+                "manually_assigned": info.manually_assigned,
             }
             for info in (device_ips or {}).values()
         ]
@@ -204,6 +208,60 @@ def test_ws_list_devices_scan_results_fill_gaps_but_never_override(hass_and_stor
     assert merged["scan:192.168.1.9"].ip_address == "192.168.1.9"
     assert merged["scan:192.168.1.9"].source == "active_scan"
     assert merged["scan:192.168.1.9"].device_matched is False
+
+
+def test_ws_list_devices_passes_ip_device_links_to_resolve_scan_result(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+    run(store.async_set_ip_device_link("192.168.1.9", "dev-manual"))
+
+    resolved_by_ip = {
+        "192.168.1.9": DeviceIpInfo(
+            device_id="dev-manual",
+            name="Manual Device",
+            ip_address="192.168.1.9",
+            source="active_scan",
+            device_matched=True,
+            manually_assigned=True,
+        ),
+    }
+    matcher = FakeMatcher(device_ips={}, resolved_by_ip=resolved_by_ip)
+    hass.data[DOMAIN]["entry-1"]["matcher"] = matcher
+    hass.data[DOMAIN]["entry-1"]["active_scan_coordinator"] = SimpleNamespace(
+        data=[DiscoveredHost(ip="192.168.1.9")]
+    )
+    hass.data[DOMAIN]["entry-1"]["passive_scanner"] = None
+
+    msg = {"type": "ip_management/devices/list", "id": 42}
+    run(real(ws_module.ws_list_devices)(hass, connection, msg))
+
+    assert matcher.resolve_calls == [{"192.168.1.9": "dev-manual"}]
+    merged = matcher.match_calls[0]
+    assert merged["dev-manual"].manually_assigned is True
+
+
+def test_ws_assign_ip_device_sets_and_clears_link(hass_and_store):
+    hass, store = hass_and_store
+    connection = FakeConnection()
+
+    assign_msg = {
+        "type": "ip_management/devices/assign_ip",
+        "id": 5,
+        "ip_address": "192.168.1.9",
+        "device_id": "dev-manual",
+    }
+    run(real(ws_module.ws_assign_ip_device)(hass, connection, assign_msg))
+    assert store.ip_device_links == {"192.168.1.9": "dev-manual"}
+    assert connection.results[0] == (5, {})
+
+    clear_msg = {
+        "type": "ip_management/devices/assign_ip",
+        "id": 6,
+        "ip_address": "192.168.1.9",
+        "device_id": None,
+    }
+    run(real(ws_module.ws_assign_ip_device)(hass, connection, clear_msg))
+    assert store.ip_device_links == {}
 
 
 def test_ws_list_devices_works_with_no_scanners_configured(hass_and_store):

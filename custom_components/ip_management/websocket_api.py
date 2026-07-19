@@ -11,6 +11,7 @@ from .const import (
     DOMAIN,
     SOURCE_ACTIVE_SCAN,
     SOURCE_PASSIVE_SCAN,
+    WS_DEVICES_ASSIGN_IP,
     WS_DEVICES_LIST,
     WS_DEVICES_SET_OVERRIDE,
     WS_SUBNETS_DELETE,
@@ -99,17 +100,22 @@ async def ws_list_devices(hass, connection, msg):
     # scan results only fill in devices neither of those already resolved
     # (setdefault below never overwrites an existing entry).
     device_ips = matcher.async_get_device_ips()
+    ip_device_links = store.ip_device_links
 
     coordinator = entry_data.get("active_scan_coordinator")
     if coordinator is not None and coordinator.data:
         for host in coordinator.data:
-            info = matcher.resolve_scan_result(host, source=SOURCE_ACTIVE_SCAN)
+            info = matcher.resolve_scan_result(
+                host, source=SOURCE_ACTIVE_SCAN, ip_device_links=ip_device_links
+            )
             device_ips.setdefault(info.device_id, info)
 
     passive_scanner = entry_data.get("passive_scanner")
     if passive_scanner is not None:
         for host in passive_scanner.snapshot():
-            info = matcher.resolve_scan_result(host, source=SOURCE_PASSIVE_SCAN)
+            info = matcher.resolve_scan_result(
+                host, source=SOURCE_PASSIVE_SCAN, ip_device_links=ip_device_links
+            )
             device_ips.setdefault(info.device_id, info)
 
     matches = matcher.async_match_devices_to_subnets(
@@ -133,6 +139,22 @@ async def ws_set_device_override(hass, connection, msg):
     connection.send_result(msg["id"], {})
 
 
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): WS_DEVICES_ASSIGN_IP,
+        vol.Required("ip_address"): str,
+        # None clears a previous manual assignment for this IP.
+        vol.Optional("device_id"): vol.Any(str, None),
+    }
+)
+@websocket_api.async_response
+async def ws_assign_ip_device(hass, connection, msg):
+    await _store(hass).async_set_ip_device_link(
+        msg["ip_address"], msg.get("device_id")
+    )
+    connection.send_result(msg["id"], {})
+
+
 @callback
 def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_list_subnets)
@@ -140,3 +162,4 @@ def async_register_websocket_commands(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_delete_subnet)
     websocket_api.async_register_command(hass, ws_list_devices)
     websocket_api.async_register_command(hass, ws_set_device_override)
+    websocket_api.async_register_command(hass, ws_assign_ip_device)

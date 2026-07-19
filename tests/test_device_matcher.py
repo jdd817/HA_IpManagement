@@ -259,6 +259,52 @@ def test_resolve_scan_result_no_mac_uses_hostname_if_present(registries):
     assert info.device_matched is False
 
 
+def test_resolve_scan_result_manual_link_matches_device(registries):
+    registries.devices["dev-1"] = FakeDeviceEntry("dev-1", name="Unknown Gadget")
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.80", mac=None)
+
+    info = DeviceMatcher(hass).resolve_scan_result(
+        host, source="active_scan", ip_device_links={"192.168.1.80": "dev-1"}
+    )
+
+    assert info.device_id == "dev-1"
+    assert info.name == "Unknown Gadget"
+    assert info.device_matched is True
+    assert info.manually_assigned is True
+
+
+def test_resolve_scan_result_manual_link_takes_priority_over_mac(registries):
+    registries.devices["dev-mac"] = FakeDeviceEntry(
+        "dev-mac",
+        name="MAC Match",
+        connections={(real_dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff")},
+    )
+    registries.devices["dev-manual"] = FakeDeviceEntry("dev-manual", name="Manual Match")
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.81", mac="AA:BB:CC:DD:EE:FF")
+
+    info = DeviceMatcher(hass).resolve_scan_result(
+        host, source="active_scan", ip_device_links={"192.168.1.81": "dev-manual"}
+    )
+
+    assert info.device_id == "dev-manual"
+    assert info.manually_assigned is True
+
+
+def test_resolve_scan_result_manual_link_to_unknown_device_falls_back(registries):
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.82", mac=None)
+
+    info = DeviceMatcher(hass).resolve_scan_result(
+        host, source="active_scan", ip_device_links={"192.168.1.82": "nonexistent-device"}
+    )
+
+    assert info.device_id == "scan:192.168.1.82"
+    assert info.device_matched is False
+    assert info.manually_assigned is False
+
+
 def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):
     hass = FakeHass()
     subnets = [{"id": "narrow", "cidr": "192.168.1.0/24"}]

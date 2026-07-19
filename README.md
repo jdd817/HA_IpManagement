@@ -44,6 +44,19 @@ UI yet for manually overriding a device's subnet — see `storage.py`'s
 
 Each device row shows a small badge for which of the sources below found it.
 
+## Manually assigning a device to an unidentified IP
+
+Active/passive discovery (below) sometimes finds an IP it can't tie back to
+a real Home Assistant device — it shows up marked **⚠ unidentified**. When
+that happens, the dashboard shows a device picker right on that row: pick
+any registered HA device and click **Assign device** to link the IP to it
+manually. The row then shows a **🔗 manually linked** badge with an
+**Unassign device** button in case you need to undo it.
+
+This manual link is per-IP and takes priority over MAC-based correlation,
+but never overrides a device_tracker/config-entry match — same gap-filling
+rule as the discovery results themselves.
+
 ## Optional discovery (active scan + passive mDNS)
 
 Both are off by default. Enable them from Settings → Devices & Services →

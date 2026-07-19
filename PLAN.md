@@ -249,6 +249,33 @@ via an optional `device_ips` parameter (defaulting to its own
 `async_get_device_ips()` when omitted, so existing callers/tests are
 unaffected).
 
+### Manually assigning a device to an unidentified IP
+
+MAC correlation in `resolve_scan_result` doesn't always find a match (the
+device may not be in HA's registry at all, or under a MAC HA never saw). For
+that residual case, `SubnetStore` keeps a second, separate mapping —
+`ip_device_links: dict[ip_address, device_id]` — distinct from the existing
+`device_overrides: dict[device_id, subnet_id]` (that one reassigns which
+*subnet* a known device belongs to; this one assigns which *device* an
+unidentified *IP* belongs to). `resolve_scan_result(host, source,
+ip_device_links=...)` checks this mapping **before** MAC correlation — an
+explicit user assignment should win over a MAC guess — and falls back to the
+normal MAC lookup (and then the synthetic `scan:<ip>` id) if the linked
+device_id no longer exists in the registry (e.g. the device was later
+removed from HA). A successful manual link produces `device_matched = True`
+plus a new `DeviceIpInfo.manually_assigned = True`, which the panel uses to
+show a distinct "manually linked" badge and an "Unassign" action, as opposed
+to the plain source badge a MAC-based match gets.
+
+The websocket command `ip_management/devices/assign_ip` (`ip_address`,
+`device_id` — `None` clears the link) is the only way to set/clear this
+mapping; `ws_list_devices` reads `store.ip_device_links` once per call and
+threads it into every `resolve_scan_result` call for that request. The
+frontend gets the device list to populate the assignment dropdown from
+HA's own core websocket command `config/device_registry/list` rather than a
+custom backend endpoint, since it just needs id/name for every registered
+device, not anything IP-Management-specific.
+
 ## 6. UI/UX Flows
 
 ### Utilized IPs screen (the sidebar link itself)
@@ -264,6 +291,15 @@ unaffected).
   row appears (this list and the "Unmatched devices" section below) — a
   distinct concept from "unmatched" (which is about subnet membership, not
   device identity), so the two badges use different wording on purpose.
+- Unidentified entries (`device_matched: false`) also get an inline
+  device-picker (a `<select>` of every HA device, populated from the core
+  `config/device_registry/list` command, plus an "Assign device" button)
+  so the user can manually tie that IP to a real device without waiting for
+  MAC correlation to catch up. Once assigned, the row shows a "manually
+  linked" badge and an "Unassign device" button instead (see §5's manual
+  assignment subsection) — this is a per-IP link, so re-running the
+  discovery scan won't need it reassigned as long as the IP doesn't move to
+  a different device.
 - Top-right 3-dot (`ha-icon-button` with `mdi:dots-vertical`) opens a menu
   with a single primary action: **"Manage subnets"** → switches the panel's
   internal route to the management screen (no new sidebar entry).

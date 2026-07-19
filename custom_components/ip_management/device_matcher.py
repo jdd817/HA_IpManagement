@@ -30,6 +30,9 @@ class DeviceIpInfo:
     # config_entry always originate from a real device_id, so this defaults
     # to True for them.
     device_matched: bool = True
+    # True when device_matched came from a user's manual IP->device link
+    # (storage.SubnetStore.ip_device_links) rather than MAC correlation.
+    manually_assigned: bool = False
 
 
 @dataclass(frozen=True)
@@ -132,18 +135,32 @@ class DeviceMatcher:
         merged.update(self._from_device_tracker())
         return merged
 
-    def resolve_scan_result(self, host: DiscoveredHost, source: str) -> DeviceIpInfo:
+    def resolve_scan_result(
+        self,
+        host: DiscoveredHost,
+        source: str,
+        ip_device_links: dict[str, str] | None = None,
+    ) -> DeviceIpInfo:
         """Turn a scanner's raw find into a DeviceIpInfo.
 
-        If the host's MAC matches a connection already in the device
-        registry, it's attributed to that real device (so it merges with,
-        rather than duplicates, anything device_tracker/config_entry already
-        found for it). Otherwise it gets a synthetic `scan:<ip>` id so it can
-        still be shown as a newly-discovered, unregistered device.
+        Resolution order: a manual IP->device link (`ip_device_links`, set via
+        the panel when MAC correlation couldn't identify a device) wins first
+        since it's an explicit user statement; then the host's MAC against the
+        device registry's connections, so it merges with rather than
+        duplicates anything device_tracker/config_entry already found.
+        Otherwise it gets a synthetic `scan:<ip>` id so it can still be shown
+        as a newly-discovered, unregistered device.
         """
+        dev_reg = dr.async_get(self._hass)
         device_entry = None
-        if host.mac:
-            dev_reg = dr.async_get(self._hass)
+        manually_assigned = False
+
+        manual_device_id = (ip_device_links or {}).get(host.ip)
+        if manual_device_id:
+            device_entry = dev_reg.async_get(manual_device_id)
+            manually_assigned = device_entry is not None
+
+        if device_entry is None and host.mac:
             device_entry = dev_reg.async_get_device(
                 connections={(dr.CONNECTION_NETWORK_MAC, dr.format_mac(host.mac))}
             )
@@ -163,6 +180,7 @@ class DeviceMatcher:
             ip_address=host.ip,
             source=source,
             device_matched=device_matched,
+            manually_assigned=manually_assigned,
         )
 
     def async_match_devices_to_subnets(
@@ -206,6 +224,7 @@ class DeviceMatcher:
                     "subnet_id": subnet_id,
                     "source": info.source,
                     "device_matched": info.device_matched,
+                    "manually_assigned": info.manually_assigned,
                 }
             )
         return matches
