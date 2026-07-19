@@ -251,6 +251,23 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+const SOURCE_LABELS = {
+  device_tracker: "tracker",
+  config_entry: "config",
+  active_scan: "active scan",
+  passive_scan: "mDNS",
+};
+
+function sourceBadge(source) {
+  const label = SOURCE_LABELS[source] || source;
+  return `<span class="badge" title="How this device's IP was found">${escapeHtml(label)}</span>`;
+}
+
+function activeScanBadge(subnet) {
+  if (!subnet.active_scan_enabled) return "";
+  return `<span class="badge" title="Included in the active (ping sweep) scan">&#128225; active scan</span>`;
+}
+
 class IPManagementPanel extends HTMLElement {
   constructor() {
     super();
@@ -467,6 +484,7 @@ class IPManagementPanel extends HTMLElement {
                 <div class="subnet-label">
                   ${escapeHtml(subnet.label || subnet.cidr)}
                   ${subnet.item_type ? `<span class="badge">${escapeHtml(subnet.item_type)}</span>` : ""}
+                  ${activeScanBadge(subnet)}
                 </div>
                 <div class="subnet-meta">${escapeHtml(subnet.cidr)} &nbsp;•&nbsp; ${escapeHtml(subnet.display_range)}</div>
               </div>
@@ -481,7 +499,7 @@ class IPManagementPanel extends HTMLElement {
                             .map(
                               (d) => `
                               <div class="device-item">
-                                <span>${escapeHtml(d.name)}</span>
+                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
                                 <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                               </div>`
                             )
@@ -505,7 +523,7 @@ class IPManagementPanel extends HTMLElement {
               .map(
                 (d) => `
                 <div class="device-item">
-                  <span>${escapeHtml(d.name)}</span>
+                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
                   <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                 </div>`
               )
@@ -557,6 +575,23 @@ class IPManagementPanel extends HTMLElement {
               <label>Notes</label>
               <textarea name="notes" rows="2">${escapeHtml(editing.notes || "")}</textarea>
             </div>
+            <div class="form-row">
+              <label style="flex-direction: row; align-items: center; gap: 8px;">
+                <input
+                  type="checkbox"
+                  name="active_scan_enabled"
+                  ${editing.active_scan_enabled ? "checked" : ""}
+                  style="width: auto;"
+                />
+                Include in active scan (ping sweep)
+              </label>
+              <p style="font-size: 12px; color: var(--secondary-text-color, #727272); margin: 4px 0 0;">
+                Only takes effect if active scanning is enabled overall, under
+                Settings → Devices & Services → IP Management → Configure.
+                Off by default — opt in per subnet so scanning only covers
+                the areas that need it.
+              </p>
+            </div>
             <div class="form-actions">
               <button type="button" class="secondary" id="cancel-form-btn">Cancel</button>
               <button type="submit" class="primary">Save</button>
@@ -575,6 +610,7 @@ class IPManagementPanel extends HTMLElement {
               <div class="subnet-label">
                 ${escapeHtml(subnet.label || subnet.cidr)}
                 ${subnet.item_type ? `<span class="badge">${escapeHtml(subnet.item_type)}</span>` : ""}
+                ${activeScanBadge(subnet)}
               </div>
               <div class="subnet-meta">${escapeHtml(subnet.cidr)} &nbsp;•&nbsp; ${escapeHtml(subnet.display_range)}</div>
             </div>
@@ -626,7 +662,14 @@ class IPManagementPanel extends HTMLElement {
     const addBtn = root.getElementById("add-subnet-btn");
     if (addBtn)
       addBtn.addEventListener("click", () => {
-        this._editingSubnet = { id: null, cidr: "", label: "", item_type: "", notes: "" };
+        this._editingSubnet = {
+          id: null,
+          cidr: "",
+          label: "",
+          item_type: "",
+          notes: "",
+          active_scan_enabled: false,
+        };
         this._formError = null;
         this._render();
       });
@@ -669,6 +712,7 @@ class IPManagementPanel extends HTMLElement {
           label: data.get("label").trim(),
           item_type: data.get("item_type").trim(),
           notes: data.get("notes").trim() || null,
+          active_scan_enabled: data.get("active_scan_enabled") === "on",
         };
         this._saveSubnet(payload);
       });

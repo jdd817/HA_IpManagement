@@ -7,15 +7,18 @@ from types import SimpleNamespace
 
 import pytest
 
+from homeassistant.helpers import device_registry as real_dr
+
 from custom_components.ip_management import device_matcher as device_matcher_module
-from custom_components.ip_management.device_matcher import DeviceMatcher
+from custom_components.ip_management.device_matcher import DeviceIpInfo, DeviceMatcher, DiscoveredHost
 
 
 class FakeDeviceEntry:
-    def __init__(self, id, name=None, name_by_user=None):
+    def __init__(self, id, name=None, name_by_user=None, connections=None):
         self.id = id
         self.name = name
         self.name_by_user = name_by_user
+        self.connections = connections or set()
 
 
 class FakeEntityEntry:
@@ -66,8 +69,20 @@ def registries(monkeypatch):
     entities = {}
     devices_by_config_entry = {}
 
+    def _async_get_device(connections=None, identifiers=None):
+        if connections:
+            for device in devices.values():
+                if device.connections & connections:
+                    return device
+        return None
+
     fake_dr = SimpleNamespace(
-        async_get=lambda hass: SimpleNamespace(async_get=lambda device_id: devices.get(device_id)),
+        CONNECTION_NETWORK_MAC=real_dr.CONNECTION_NETWORK_MAC,
+        format_mac=real_dr.format_mac,
+        async_get=lambda hass: SimpleNamespace(
+            async_get=lambda device_id: devices.get(device_id),
+            async_get_device=_async_get_device,
+        ),
         async_entries_for_config_entry=lambda dev_reg, entry_id: devices_by_config_entry.get(
             entry_id, []
         ),
@@ -200,3 +215,63 @@ def test_device_override_takes_precedence_over_ip_match(registries):
     )
 
     assert matches[0]["subnet_id"] == "manual-subnet"
+
+
+def test_resolve_scan_result_matches_known_device_by_mac(registries):
+    registries.devices["dev-1"] = FakeDeviceEntry(
+        "dev-1",
+        name="Printer",
+        connections={(real_dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff")},
+    )
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.50", mac="AA:BB:CC:DD:EE:FF")
+
+    info = DeviceMatcher(hass).resolve_scan_result(host, source="active_scan")
+
+    assert info.device_id == "dev-1"
+    assert info.name == "Printer"
+    assert info.ip_address == "192.168.1.50"
+    assert info.source == "active_scan"
+
+
+def test_resolve_scan_result_unknown_mac_gets_synthetic_id(registries):
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.60", mac="11:22:33:44:55:66")
+
+    info = DeviceMatcher(hass).resolve_scan_result(host, source="active_scan")
+
+    assert info.device_id == "scan:192.168.1.60"
+    assert info.name == "192.168.1.60"
+
+
+def test_resolve_scan_result_no_mac_uses_hostname_if_present(registries):
+    hass = FakeHass()
+    host = DiscoveredHost(ip="192.168.1.70", mac=None, name="printer.local")
+
+    info = DeviceMatcher(hass).resolve_scan_result(host, source="passive_scan")
+
+    assert info.device_id == "scan:192.168.1.70"
+    assert info.name == "printer.local"
+    assert info.source == "passive_scan"
+
+
+def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):
+    hass = FakeHass()
+    subnets = [{"id": "narrow", "cidr": "192.168.1.0/24"}]
+    device_ips = {
+        "scan:192.168.1.77": DeviceIpInfo(
+            device_id="scan:192.168.1.77",
+            name="192.168.1.77",
+            ip_address="192.168.1.77",
+            source="active_scan",
+        )
+    }
+
+    matches = DeviceMatcher(hass).async_match_devices_to_subnets(
+        subnets, device_overrides={}, device_ips=device_ips
+    )
+
+    assert len(matches) == 1
+    assert matches[0]["device_id"] == "scan:192.168.1.77"
+    assert matches[0]["subnet_id"] == "narrow"
+    assert matches[0]["source"] == "active_scan"

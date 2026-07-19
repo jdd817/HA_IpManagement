@@ -9,5 +9,23 @@
     "abort": {
       "single_instance_allowed": "IP Management is already set up."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "IP Management discovery options",
+        "description": "Both discovery methods only fill gaps — they never override a device Home Assistant already knows the IP for.",
+        "data": {
+          "enable_active_scan": "Active scan (ping sweep)",
+          "active_scan_interval_hours": "Active scan interval (hours)",
+          "enable_passive_discovery": "Passive discovery (mDNS)"
+        },
+        "data_description": {
+          "enable_active_scan": "Pings every host address in each subnet you've registered in the panel, then reads the ARP table to find its MAC address. Subnets larger than 512 hosts are skipped to avoid flooding the network.",
+          "active_scan_interval_hours": "How often to repeat the active scan.",
+          "enable_passive_discovery": "Listens for mDNS/Bonjour announcements (HomeKit, Chromecast, AirPlay, printers, etc.) instead of probing the network."
+        }
+      }
+    }
   }
 }

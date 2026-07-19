@@ -9,6 +9,8 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import (
     DOMAIN,
+    SOURCE_ACTIVE_SCAN,
+    SOURCE_PASSIVE_SCAN,
     WS_DEVICES_LIST,
     WS_DEVICES_SET_OVERRIDE,
     WS_SUBNETS_DELETE,
@@ -57,6 +59,7 @@ async def ws_list_subnets(hass, connection, msg):
         vol.Optional("label", default=""): str,
         vol.Optional("item_type", default=""): str,
         vol.Optional("notes"): vol.Any(str, None),
+        vol.Optional("active_scan_enabled", default=False): bool,
     }
 )
 @websocket_api.async_response
@@ -88,9 +91,29 @@ async def ws_delete_subnet(hass, connection, msg):
 @websocket_api.websocket_command({vol.Required("type"): WS_DEVICES_LIST})
 @websocket_api.async_response
 async def ws_list_devices(hass, connection, msg):
-    store = _store(hass)
-    matches = _matcher(hass).async_match_devices_to_subnets(
-        store.subnets, store.device_overrides
+    entry_data = _entry_data(hass)
+    store: SubnetStore = entry_data["store"]
+    matcher: DeviceMatcher = entry_data["matcher"]
+
+    # device_tracker/config_entry are the authoritative sources; active/passive
+    # scan results only fill in devices neither of those already resolved
+    # (setdefault below never overwrites an existing entry).
+    device_ips = matcher.async_get_device_ips()
+
+    coordinator = entry_data.get("active_scan_coordinator")
+    if coordinator is not None and coordinator.data:
+        for host in coordinator.data:
+            info = matcher.resolve_scan_result(host, source=SOURCE_ACTIVE_SCAN)
+            device_ips.setdefault(info.device_id, info)
+
+    passive_scanner = entry_data.get("passive_scanner")
+    if passive_scanner is not None:
+        for host in passive_scanner.snapshot():
+            info = matcher.resolve_scan_result(host, source=SOURCE_PASSIVE_SCAN)
+            device_ips.setdefault(info.device_id, info)
+
+    matches = matcher.async_match_devices_to_subnets(
+        store.subnets, store.device_overrides, device_ips=device_ips
     )
     connection.send_result(msg["id"], {"devices": matches})
 
