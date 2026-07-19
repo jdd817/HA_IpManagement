@@ -59,7 +59,10 @@ throughout this repo's history.
   /`passive_scanner.py` produce, and `resolve_scan_result(host, source)`,
   which turns one into a `DeviceIpInfo` by matching `host.mac` against the
   device registry's `CONNECTION_NETWORK_MAC` connections (falling back to a
-  synthetic `scan:<ip>` id when there's no match).
+  synthetic `scan:<ip>` id when there's no match). `DeviceIpInfo.device_matched`
+  (default `True`) is set to `False` only for that synthetic-id case — it's
+  what the panel's "unidentified" badge keys off of (see `www/ip-management-panel.js`
+  below), distinct from subnet-membership matching ("Unmatched devices").
   `async_match_devices_to_subnets` takes an optional pre-merged `device_ips`
   dict (see `websocket_api.py` below) — omit it and it derives one itself
   via `async_get_device_ips()`, same as before this parameter existed.
@@ -161,6 +164,12 @@ as-is; there is nothing to compile.
   above). Don't re-add one.
 - Outgoing save/delete messages use `subnet_id`, matching the websocket API
   naming above — don't rename this back to `id`.
+- Two badge helpers, easy to confuse: `sourceBadge(d.source)` (neutral,
+  shows tracker/config/active scan/mDNS) and `unidentifiedDeviceBadge(d)`
+  (warning-styled, only renders when `d.device_matched === false`). Both are
+  rendered per device row in *both* places device rows appear (the per-subnet
+  list and the "Unmatched devices" section) — don't add one without the
+  other when touching that markup.
 
 ### Testing approach
 

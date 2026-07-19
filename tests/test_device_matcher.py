@@ -117,6 +117,7 @@ def test_device_tracker_ip_resolved(registries):
     assert result["dev-1"].ip_address == "192.168.1.42"
     assert result["dev-1"].source == "device_tracker"
     assert result["dev-1"].name == "Phone"
+    assert result["dev-1"].device_matched is True
 
 
 def test_non_ipv4_attribute_ignored(registries):
@@ -232,6 +233,7 @@ def test_resolve_scan_result_matches_known_device_by_mac(registries):
     assert info.name == "Printer"
     assert info.ip_address == "192.168.1.50"
     assert info.source == "active_scan"
+    assert info.device_matched is True
 
 
 def test_resolve_scan_result_unknown_mac_gets_synthetic_id(registries):
@@ -242,6 +244,7 @@ def test_resolve_scan_result_unknown_mac_gets_synthetic_id(registries):
 
     assert info.device_id == "scan:192.168.1.60"
     assert info.name == "192.168.1.60"
+    assert info.device_matched is False
 
 
 def test_resolve_scan_result_no_mac_uses_hostname_if_present(registries):
@@ -253,6 +256,7 @@ def test_resolve_scan_result_no_mac_uses_hostname_if_present(registries):
     assert info.device_id == "scan:192.168.1.70"
     assert info.name == "printer.local"
     assert info.source == "passive_scan"
+    assert info.device_matched is False
 
 
 def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):
@@ -264,6 +268,7 @@ def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):
             name="192.168.1.77",
             ip_address="192.168.1.77",
             source="active_scan",
+            device_matched=False,
         )
     }
 
@@ -275,3 +280,4 @@ def test_match_devices_to_subnets_accepts_premerged_device_ips(registries):
     assert matches[0]["device_id"] == "scan:192.168.1.77"
     assert matches[0]["subnet_id"] == "narrow"
     assert matches[0]["source"] == "active_scan"
+    assert matches[0]["device_matched"] is False

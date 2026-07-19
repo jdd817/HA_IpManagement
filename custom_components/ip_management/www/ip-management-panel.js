@@ -128,6 +128,11 @@ const STYLE = `
     font-size: 12px;
     margin-left: 8px;
   }
+  .badge-warning {
+    background: transparent;
+    border: 1px solid var(--warning-color, #ffa600);
+    color: var(--warning-color, #ffa600);
+  }
   .device-count {
     font-size: 13px;
     color: var(--secondary-text-color, #727272);
@@ -261,6 +266,11 @@ const SOURCE_LABELS = {
 function sourceBadge(source) {
   const label = SOURCE_LABELS[source] || source;
   return `<span class="badge" title="How this device's IP was found">${escapeHtml(label)}</span>`;
+}
+
+function unidentifiedDeviceBadge(device) {
+  if (device.device_matched !== false) return "";
+  return `<span class="badge badge-warning" title="This IP responded to a scan, but couldn't be tied to a known Home Assistant device">&#10067; unidentified</span>`;
 }
 
 function activeScanBadge(subnet) {
@@ -499,7 +509,7 @@ class IPManagementPanel extends HTMLElement {
                             .map(
                               (d) => `
                               <div class="device-item">
-                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
+                                <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
                                 <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                               </div>`
                             )
@@ -523,7 +533,7 @@ class IPManagementPanel extends HTMLElement {
               .map(
                 (d) => `
                 <div class="device-item">
-                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)}</span>
+                  <span>${escapeHtml(d.name)} ${sourceBadge(d.source)} ${unidentifiedDeviceBadge(d)}</span>
                   <span class="device-ip">${escapeHtml(d.ip_address)}</span>
                 </div>`
               )

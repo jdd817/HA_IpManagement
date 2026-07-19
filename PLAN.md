@@ -225,8 +225,14 @@ know about HA's registries. `DeviceMatcher.resolve_scan_result(host, source)`
 turns one into a `DeviceIpInfo`: if `host.mac` matches an existing device
 registry connection (`dr.CONNECTION_NETWORK_MAC`), it's attributed to that
 real device (merging with, not duplicating, anything device_tracker/config
-entry already found); otherwise it gets a synthetic `scan:<ip>` id so it
-still shows up as a newly-discovered, unregistered device.
+entry already found, and `DeviceIpInfo.device_matched = True`); otherwise
+it gets a synthetic `scan:<ip>` id and `device_matched = False`, so it
+still shows up as a newly-discovered device but is flagged as one HA
+couldn't actually identify — the panel renders this as an "unidentified"
+badge (see §6) rather than presenting it as an ordinary named device.
+`device_tracker`/`config_entry` results always have `device_matched = True`
+(the dataclass default), since they're derived from a real device_id by
+construction.
 
 `websocket_api.ws_list_devices` builds the merged set itself: start from
 `DeviceMatcher.async_get_device_ips()` (device_tracker + config_entry),
@@ -247,7 +253,12 @@ unaffected).
   count.
 - Expand a row → list of matched devices (name, entity/device link back
   into HA, resolved IP, and a small badge showing which source found it —
-  tracker/config/active scan/mDNS).
+  tracker/config/active scan/mDNS). Entries with `device_matched: false`
+  (an IP a scan found but couldn't tie to a real HA device — see §5) get an
+  additional warning-styled "unidentified" badge, shown wherever a device
+  row appears (this list and the "Unmatched devices" section below) — a
+  distinct concept from "unmatched" (which is about subnet membership, not
+  device identity), so the two badges use different wording on purpose.
 - Top-right 3-dot (`ha-icon-button` with `mdi:dots-vertical`) opens a menu
   with a single primary action: **"Manage subnets"** → switches the panel's
   internal route to the management screen (no new sidebar entry).
