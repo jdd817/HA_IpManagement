@@ -49,13 +49,15 @@ Each device row shows a small badge for which of the sources below found it.
 Both are off by default. Enable them from Settings → Devices & Services →
 IP Management → **Configure**:
 
-- **Active scan (ping sweep)** — pings every host address in each subnet
-  you've *registered in the panel and individually opted in* (see below —
-  never a wider range), then reads the system ARP/neighbor table to get a
-  MAC address for whatever responds. Runs on a timer; the interval is
-  configurable in the same options screen (default **24 hours**). Subnets
-  larger than 512 hosts are skipped (and logged) rather than scanned, so a
-  mistakenly huge CIDR can't flood the network.
+- **Active scan (ping sweep)** — pings every address in each subnet you've
+  *registered in the panel and individually opted in* (see below — never a
+  wider range, and including the subnet's network/broadcast addresses,
+  since subnets here are arbitrary ranges rather than classful networks),
+  then reads the system ARP/neighbor table to get a MAC address for
+  whatever responds. Runs on a timer; the interval is configurable in the
+  same options screen (default **24 hours**). Subnets larger than 512
+  addresses are skipped (and logged) rather than scanned, so a mistakenly
+  huge CIDR can't flood the network.
 
   Turning this on in Configure only enables the feature — it doesn't scan
   anything by itself. Each subnet also needs its own opt-in: open it in

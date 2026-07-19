@@ -16,9 +16,22 @@ def run(coro):
     return asyncio.run(coro)
 
 
-def test_hosts_to_scan_returns_usable_host_addresses():
+def test_hosts_to_scan_returns_every_address_including_network_and_broadcast():
+    # Subnets here are arbitrary user-defined ranges, not classful networks -
+    # display_range already shows users the network/broadcast addresses as
+    # part of the range (e.g. ".0-.3"), so the scan must cover them too.
     ips = hosts_to_scan("192.168.1.0/30", max_hosts=512)
-    assert ips == ["192.168.1.1", "192.168.1.2"]
+    assert ips == ["192.168.1.0", "192.168.1.1", "192.168.1.2", "192.168.1.3"]
+
+
+def test_hosts_to_scan_does_not_skip_the_first_address_of_the_block():
+    # Regression test: 10.72.10.32/28 was silently skipping 10.72.10.32
+    # (the network address) before hosts_to_scan switched from
+    # network.hosts() to iterating the full network.
+    ips = hosts_to_scan("10.72.10.32/28", max_hosts=512)
+    assert ips[0] == "10.72.10.32"
+    assert ips[-1] == "10.72.10.47"
+    assert len(ips) == 16
 
 
 def test_hosts_to_scan_slash32_returns_the_single_address():
@@ -26,13 +39,13 @@ def test_hosts_to_scan_slash32_returns_the_single_address():
 
 
 def test_hosts_to_scan_rejects_subnets_over_the_cap():
-    # A /16 has 65534 usable hosts - far past a small cap.
+    # A /16 has 65536 addresses - far past a small cap.
     assert hosts_to_scan("10.0.0.0/16", max_hosts=512) is None
 
 
 def test_hosts_to_scan_accepts_subnets_at_the_cap():
-    # A /24 has exactly 254 usable hosts.
-    assert len(hosts_to_scan("192.168.1.0/24", max_hosts=254)) == 254
+    # A /24 has exactly 256 addresses (network + broadcast included).
+    assert len(hosts_to_scan("192.168.1.0/24", max_hosts=256)) == 256
 
 
 def test_parse_ip_neigh_output():
@@ -82,7 +95,12 @@ def test_scan_pings_hosts_in_registered_subnets_and_resolves_mac():
 
     hosts = run(scanner.async_scan(subnets))
 
-    assert sorted(pinged) == ["192.168.1.1", "192.168.1.2"]
+    assert sorted(pinged) == [
+        "192.168.1.0",
+        "192.168.1.1",
+        "192.168.1.2",
+        "192.168.1.3",
+    ]
     assert hosts == [DiscoveredHost(ip="192.168.1.1", mac="aa:bb:cc:dd:ee:ff")]
 
 

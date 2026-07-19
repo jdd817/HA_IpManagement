@@ -42,23 +42,27 @@ _ARP_A_WINDOWS_LINE = re.compile(
 def hosts_to_scan(
     cidr: str, max_hosts: int = MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET
 ) -> list[str] | None:
-    """Return every host address in `cidr`, or None if that's more than `max_hosts`.
+    """Return every address in `cidr`, or None if that's more than `max_hosts`.
+
+    Includes the network and broadcast addresses (i.e. every address
+    `ipaddress.IPv4Network` iterates, not just `.hosts()`) — subnets in this
+    app are arbitrary user-defined ranges for organizing IPs, not
+    necessarily classful networks, so nothing about a CIDR's first/last
+    address is assumed unusable. `subnet_utils.display_range` already shows
+    users that full range (e.g. ".32-.47" for a /28 starting at .32), so the
+    scan needs to cover it too, or it silently skips addresses the UI claims
+    are part of the subnet.
 
     None signals "too big to scan safely" rather than raising, so callers
-    can skip-and-log per subnet without aborting the whole sweep. Host count
-    is derived from `num_addresses` rather than materializing `.hosts()`
-    first, so an oversized subnet is rejected without ever building a huge
-    list.
+    can skip-and-log per subnet without aborting the whole sweep.
+    `num_addresses` is used for the size check rather than materializing the
+    full list first, so an oversized subnet is rejected without ever
+    building a huge list.
     """
     network = parse_network(cidr)
-    host_count = (
-        network.num_addresses
-        if network.prefixlen >= 31  # /31, /32: no distinct network/broadcast (RFC 3021)
-        else network.num_addresses - 2
-    )
-    if host_count > max_hosts:
+    if network.num_addresses > max_hosts:
         return None
-    return [str(ip) for ip in network.hosts()]
+    return [str(ip) for ip in network]
 
 
 def parse_ip_neigh_output(output: str) -> dict[str, str]:

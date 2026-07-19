@@ -66,9 +66,15 @@ throughout this repo's history.
 - **`active_scanner.py`** (`ActiveScanner`, opt-in, two levels deep) —
   `async_scan(subnets)` ping-sweeps whatever subnet list it's handed; it has
   no opinion on *which* subnets that should be (`hosts_to_scan` only rejects
-  a given subnet if it's over `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` hosts, not
-  based on any opt-in flag). Filtering to subnets the user actually opted
-  into (`Subnet.active_scan_enabled`, a per-subnet field set from the Subnet
+  a given subnet if it's over `MAX_ACTIVE_SCAN_HOSTS_PER_SUBNET` addresses,
+  not based on any opt-in flag). **`hosts_to_scan` iterates the full
+  `IPv4Network` (every address, including network/broadcast) rather than
+  `.hosts()`** — subnets in this app are arbitrary user-defined ranges, not
+  classful networks, and `subnet_utils.display_range` already presents the
+  network/broadcast addresses as part of the range shown to the user, so
+  excluding them from the scan would silently under-scan (this was a real
+  bug: a `/28` at `.32` was skipping `.32` itself). Filtering to subnets the
+  user actually opted into (`Subnet.active_scan_enabled`, a per-subnet field set from the Subnet
   Management form, default `False`) is `coordinator.scannable_subnets()`'s
   job, not this module's — enabling active scanning in the options flow only
   turns the coordinator on; scanning still touches nothing until individual
