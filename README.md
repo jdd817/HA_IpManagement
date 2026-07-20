@@ -14,7 +14,9 @@ network and seeing which registered devices are using an IP within each one.
 - **Subnet Management** (add/edit/delete subnets) is reached from the
   3-dot menu on that screen — it is not a separate sidebar entry.
 
-See [PLAN.md](PLAN.md) for the full architecture writeup.
+See [PLAN.md](PLAN.md) for the full architecture writeup, or
+[Design/](Design/README.md) for diagram-first architecture docs (component,
+data-model, and sequence diagrams).
 
 ## Installation
 
