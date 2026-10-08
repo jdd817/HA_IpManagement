@@ -165,6 +165,14 @@ const STYLE = `
     color: var(--secondary-text-color, #727272);
     font-family: monospace;
   }
+  .diagram {
+    padding: 8px 16px 16px;
+    overflow-x: auto;
+  }
+  .diagram svg {
+    max-width: 100%;
+    height: auto;
+  }
   .empty {
     padding: 24px 16px;
     color: var(--secondary-text-color, #727272);
@@ -307,6 +315,84 @@ function activeScanBadge(subnet) {
   return `<span class="badge" title="Included in the active (ping sweep) scan">&#128225; active scan</span>`;
 }
 
+const MERMAID_URL = "https://cdn.jsdelivr.net/npm/mermaid@11.12.0/dist/mermaid.esm.min.mjs";
+let _mermaidPromise = null;
+
+function loadMermaid() {
+  if (!_mermaidPromise) {
+    _mermaidPromise = import(MERMAID_URL).then((m) => m.default);
+    _mermaidPromise.catch(() => {
+      _mermaidPromise = null;
+    });
+  }
+  return _mermaidPromise;
+}
+
+// architecture-beta only accepts [A-Za-z0-9_ ] in titles (no dots, slashes or
+// line breaks), so the definition carries placeholder tokens and the real
+// two-line labels are swapped into the rendered SVG by applyDiagramLabels().
+function diagramLines(description, address) {
+  const desc = String(description || "").trim();
+  return desc && desc !== address ? [desc, address] : [address];
+}
+
+function applyDiagramLabels(svgText, labels) {
+  const doc = new DOMParser().parseFromString(svgText, "image/svg+xml");
+  doc.querySelectorAll("text").forEach((textEl) => {
+    const inner = textEl.querySelector(".text-inner-tspan");
+    const lines = inner && labels.get(inner.textContent.trim());
+    if (!lines) return;
+    const outer = inner.parentNode;
+    lines.forEach((line, i) => {
+      const clone = outer.cloneNode(true);
+      clone.querySelector(".text-inner-tspan").textContent = line;
+      // Group headers are one line tall; lift the first line so both fit.
+      if (i === 0 && lines.length > 1 && inner.textContent.trim().startsWith("LBLnet")) {
+        clone.setAttribute("dy", "0.5em");
+      }
+      if (i > 0) {
+        clone.removeAttribute("y");
+        clone.setAttribute("dy", "1.2em");
+      }
+      textEl.insertBefore(clone, outer);
+    });
+    textEl.removeChild(outer);
+  });
+  return new XMLSerializer().serializeToString(doc.documentElement);
+}
+
+/**
+ * Build a mermaid architecture-beta definition from subnets and devices.
+ * Returns { definition, labels } where labels maps placeholder token -> lines.
+ */
+function buildArchitectureDiagram(subnets, devices) {
+  const labels = new Map();
+  const ids = new Map(subnets.map((s, i) => [s.id, `net${i}`]));
+  const children = new Map();
+  for (const s of subnets) {
+    const key = ids.has(s.parent_id) ? s.parent_id : "__root__";
+    if (!children.has(key)) children.set(key, []);
+    children.get(key).push(s);
+  }
+  const lines = ["architecture-beta"];
+  const walk = (key) => {
+    for (const s of children.get(key) || []) {
+      const gid = ids.get(s.id);
+      const parent = key === "__root__" ? "" : ` in ${ids.get(key)}`;
+      labels.set(`LBL${gid}`, diagramLines(s.label, s.cidr));
+      lines.push(`    group ${gid}(cloud)[LBL${gid}]${parent}`);
+      walk(s.id);
+    }
+  };
+  walk("__root__");
+  devices.forEach((d, i) => {
+    if (!ids.has(d.subnet_id)) return;
+    labels.set(`LBLdev${i}`, diagramLines(d.name, d.ip_address));
+    lines.push(`    service dev${i}(internet)[LBLdev${i}] in ${ids.get(d.subnet_id)}`);
+  });
+  return { definition: lines.join("\n"), labels };
+}
+
 class IPManagementPanel extends HTMLElement {
   constructor() {
     super();
@@ -322,6 +408,7 @@ class IPManagementPanel extends HTMLElement {
     this._editingSubnet = null;
     this._formError = null;
     this._assigningDevice = null;
+    this._diagramCache = null;
     this.attachShadow({ mode: "open" });
   }
 
@@ -511,6 +598,7 @@ class IPManagementPanel extends HTMLElement {
     const dialog = this._assigningDevice ? this._renderAssignDialog() : "";
     this.shadowRoot.innerHTML = `${STYLE}${body}${dialog}`;
     this._attachHandlers();
+    this._renderDiagram();
   }
 
   _renderAssignDialog() {
@@ -646,8 +734,48 @@ class IPManagementPanel extends HTMLElement {
           ${rows.length ? rowsHtml : `<div class="empty">No subnets defined yet. Open the menu to add one.</div>`}
         </div>
         ${unmatchedHtml}
+        ${
+          rows.length
+            ? `<div class="card">
+                <div class="section-title">Allocated IP diagram</div>
+                <div id="ip-diagram" class="diagram"></div>
+               </div>`
+            : ""
+        }
       </div>
     `;
+  }
+
+  async _renderDiagram() {
+    const container = this.shadowRoot.getElementById("ip-diagram");
+    if (!container) return;
+    const dark = !!(this._hass && this._hass.themes && this._hass.themes.darkMode);
+    const { definition, labels } = buildArchitectureDiagram(this._subnets, this._devices);
+    const labelKey = [...labels].map(([k, v]) => `${k}=${v.join("/")}`).join("|");
+    const key = `${dark}|${definition}|${labelKey}`;
+    if (this._diagramCache && this._diagramCache.key === key) {
+      container.innerHTML = this._diagramCache.svg;
+      return;
+    }
+    container.textContent = "Loading diagram…";
+    try {
+      const mermaid = await loadMermaid();
+      mermaid.initialize({
+        startOnLoad: false,
+        theme: dark ? "dark" : "default",
+        securityLevel: "strict",
+      });
+      const rendered = await mermaid.render(`ip-diagram-svg-${Date.now()}`, definition);
+      const svg = applyDiagramLabels(rendered.svg, labels);
+      this._diagramCache = { key, svg };
+      const current = this.shadowRoot.getElementById("ip-diagram");
+      if (current) current.innerHTML = svg;
+    } catch (err) {
+      const current = this.shadowRoot.getElementById("ip-diagram");
+      if (current) {
+        current.textContent = `Could not render diagram: ${(err && err.message) || err}`;
+      }
+    }
   }
 
   _renderSubnetManagement() {

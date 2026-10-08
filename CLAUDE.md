@@ -196,6 +196,13 @@ as-is; there is nothing to compile.
   above). Don't re-add one.
 - Outgoing save/delete messages use `subnet_id`, matching the websocket API
   naming above — don't rename this back to `id`.
+- The dashboard ends with an "Allocated IP diagram" card: `buildArchitectureDiagram()`
+  emits a mermaid `architecture-beta` definition (subnets = `cloud` groups nested via
+  `in`, devices = `internet` services). **Gotcha:** architecture titles only accept
+  `[A-Za-z0-9_ ]`, so the definition uses placeholder tokens (`LBLnet0`, `LBLdev3`)
+  and `applyDiagramLabels()` swaps the real two-line labels into the rendered SVG.
+  Mermaid is lazy-loaded from jsDelivr (pinned version) and the SVG is cached in
+  `_diagramCache`, since `_render()` rebuilds the shadow DOM each time.
 - Badge helpers, easy to confuse: `sourceBadge(d.source)` (neutral, shows
   tracker/config/active scan/mDNS), `unidentifiedDeviceBadge(d)`
   (warning-styled, only renders when `d.device_matched === false`), and

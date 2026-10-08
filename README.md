@@ -44,6 +44,15 @@ UI yet for manually overriding a device's subnet — see `storage.py`'s
 
 Each device row shows a small badge for which of the sources below found it.
 
+## Allocated IP diagram
+
+The bottom of the dashboard shows a Mermaid architecture diagram: each subnet is a
+group (nested inside its parent subnet's group, labelled with its description
+then its CIDR), and each allocated IP is a service inside its most specific
+subnet (labelled with the device name then the IP). Devices that match no subnet
+are omitted. The Mermaid library is loaded from the jsDelivr CDN in the browser,
+so the diagram needs internet access from the machine viewing the panel.
+
 ## Manually assigning a device to an IP
 
 Click any IP address on the dashboard — matched, unmatched, or marked
